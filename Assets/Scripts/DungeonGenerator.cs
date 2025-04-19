@@ -31,6 +31,17 @@ internal class Room
     public Color color;
 }
 
+internal class Door
+{
+    public Door(BoundsInt doorBounds, Color doorColor)
+    {
+        bounds = doorBounds;
+        color = doorColor;
+    }
+    public BoundsInt bounds;
+    public Color color;
+}
+
 internal class Wall
 {
     public Wall(BoundsInt wallBounds, Color wallColor, DoorDirection targetDoorDirection)
@@ -93,6 +104,9 @@ public class DungeonGenerator : MonoBehaviour
     [MinValue(1), LabelText("Door Width")]
     [Tooltip("Width of doors that connect rooms.")]
     public int doorWidth = 3;
+    [BoxGroup("Settings/Structure/Walls & Doors")]
+    [MinValue(0), LabelText("Door Offset")]
+    public int doorOffset = 1;
 
     [TabGroup("Settings", "Randomization", SdfIconType.Dice6Fill)]
     [BoxGroup("Settings/Randomization/Seed")]
@@ -103,6 +117,7 @@ public class DungeonGenerator : MonoBehaviour
     
     private List<Room> rooms = new();
     private List<Wall> walls = new();
+    private List<Door> doors = new();
     private System.Random rnd;
 
     private readonly Color[] brightColors = new[]
@@ -137,6 +152,7 @@ public class DungeonGenerator : MonoBehaviour
         rnd = new System.Random(seed);
         rooms.Add(new Room(new RectInt(startPoint.x, startPoint.y, dungeonSize.x, dungeonSize.y), SplitMethod.Horizontaly, Color.green));
         walls.Clear();
+        doors.Clear();
 
         var failStreak = 0;
         // Add new split room to the list
@@ -168,6 +184,7 @@ public class DungeonGenerator : MonoBehaviour
                 {
                     Debug.Log($"Regenerating rooms ended on division: {i}");
                     BuildTheWall();
+                    PlaceDoors();
                     return;
                 }
                 continue;
@@ -187,6 +204,11 @@ public class DungeonGenerator : MonoBehaviour
         foreach (var wall in walls)
         {
             AlgorithmsUtils.DebugBoundsInt(wall.bounds, wall.color);
+        }
+
+        foreach (var door in doors)
+        {
+            AlgorithmsUtils.DebugBoundsInt(door.bounds, door.color);
         }
     }
 
@@ -232,15 +254,15 @@ public class DungeonGenerator : MonoBehaviour
                     }
                     var adaptiveColor = Color.red;
                     var doorDirection = DoorDirection.None;
-                    if (tempBox.size.x > doorWidth)
-                    {
-                        adaptiveColor = Color.green;
-                        doorDirection = DoorDirection.X;
-                    }
-                    else if (tempBox.size.z > doorWidth)
+                    if (tempBox.size.x > doorWidth + wallWidth * 2)
                     {
                         adaptiveColor = Color.green;
                         doorDirection = DoorDirection.Z;
+                    }
+                    else if (tempBox.size.z > doorWidth + wallWidth * 2)
+                    {
+                        adaptiveColor = Color.green;
+                        doorDirection = DoorDirection.X;
                     }
                     var tempWall = new Wall(tempBox, adaptiveColor, doorDirection);
                     walls.Add(tempWall);
@@ -257,39 +279,29 @@ public class DungeonGenerator : MonoBehaviour
         walls.Add(edgeWall4);
     }
 
-    private bool CheckEdges(BoundsInt wall)
+    private void PlaceDoors()
     {
-        return (wall.xMin == 0 && wall.xMax == wallWidth) ||
-               (wall.xMin == dungeonSize.x - wallWidth && wall.xMax == dungeonSize.x) ||
-               (wall.yMin == 0 && wall.yMax == wallWidth) ||
-               (wall.yMin == dungeonSize.y - wallWidth && wall.yMax == dungeonSize.y);
-    }
-
-    private void CleanUp()
-    {
-        var objectsToDelete = new List<int>();
-        for (int i = 0; i < walls.Count; i++)
+        foreach (var wall in walls)
         {
-            var wall = walls[i];
-            if ((wall.bounds.size.x != wallWidth) && (wall.bounds.size.x != wallWidth * 2) &&
-                (wall.bounds.size.z != wallWidth) && (wall.bounds.size.z != wallWidth * 2))
-            {
-                objectsToDelete.Add(i);
-                continue;
-            }
+            if (wall.doorDirection is DoorDirection.None) continue;
 
-            foreach (var pairWall in walls)
+            switch (wall.doorDirection)
             {
-                if (pairWall.bounds == wall.bounds)
-                {
-                    objectsToDelete.Add(i);
-                }
+                case DoorDirection.X:
+                    var zMax = wall.bounds.zMax - wallWidth - doorWidth;
+                    var zMin = wall.bounds.zMin + wallWidth;
+                    var tempBounds = new BoundsInt(new Vector3Int(wall.bounds.xMin - doorOffset, 0, rnd.Next(zMin, zMax)), new Vector3Int(wallWidth + doorOffset * 2, wallHeight + doorOffset, doorWidth));
+                    var tempDoor = new Door(tempBounds, Color.yellow);
+                    doors.Add(tempDoor);
+                    break;
+                case DoorDirection.Z:
+                    var xMax = wall.bounds.xMax - wallWidth - doorWidth;
+                    var xMin = wall.bounds.xMin + wallWidth;
+                    tempBounds = new BoundsInt(new Vector3Int(rnd.Next(xMin, xMax), 0, wall.bounds.zMin - doorOffset), new Vector3Int(doorWidth, wallHeight + doorOffset, wallWidth + doorOffset * 2));
+                    tempDoor = new Door(tempBounds, Color.yellow);
+                    doors.Add(tempDoor);
+                    break;
             }
-        }
-        objectsToDelete.Sort((a, b) => b.CompareTo(a));
-        foreach (var index in objectsToDelete)
-        {
-            walls.RemoveAt(index);
         }
     }
 
@@ -327,6 +339,15 @@ public class DungeonGenerator : MonoBehaviour
 #if UNITY_EDITOR
             Handles.Label(center, $"#{i}", style);
 #endif
+        }
+
+        foreach (var door in doors)
+        {
+            var color = door.color;
+            color.a = 0.3f;
+            Gizmos.color = color;
+            Vector3 center = door.bounds.center;
+            Gizmos.DrawCube(center, door.bounds.size);
         }
     }
 }

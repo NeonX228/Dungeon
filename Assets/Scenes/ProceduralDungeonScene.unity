@@ -455,15 +455,15 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cc8fc6b5386cdec42883bcfc23e4a26a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  bottomLeftCorner: {x: 0, y: 0}
-  topRightCorner: {x: 1000, y: 1000}
+  startPoint: {x: 0, y: 0}
+  dungeonSize: {x: 200, y: 200}
   divisions: 10000
   sizeConstrain: 50
   acceptableRatio: 2
   wallWidth: 2
   wallHeight: 20
   doorWidth: 10
-  seed: 1254337625
+  seed: 1
 --- !u!4 &1107614755
 Transform:
   m_ObjectHideFlags: 0
