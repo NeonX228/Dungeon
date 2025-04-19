@@ -463,6 +463,7 @@ MonoBehaviour:
   wallWidth: 2
   wallHeight: 20
   doorWidth: 10
+  seed: 1254337625
 --- !u!4 &1107614755
 Transform:
   m_ObjectHideFlags: 0

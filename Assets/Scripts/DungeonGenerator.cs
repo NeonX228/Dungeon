@@ -3,6 +3,7 @@ using UnityEngine;
 using System.Collections.Generic;
 using Sirenix.OdinInspector;
 using UnityEditor;
+using UnityEngine.Serialization;
 
 internal enum SplitMethod
 {
@@ -47,20 +48,62 @@ internal class Wall
 [ExecuteAlways]
 public class DungeonGenerator : MonoBehaviour
 {
-    [Title("General Settings")]
-    public Vector2Int bottomLeftCorner = new(0, 0);
-    public Vector2Int topRightCorner = new(500, 200);
-    [Title("Divisions")]
+    [FormerlySerializedAs("bottomLeftCorner")]
+    [TabGroup("Settings", "General", SdfIconType.GearFill)]
+    [BoxGroup("Settings/General/Area Bounds")]
+    [LabelText("Starting point"), GUIColor(0.8f, 0.95f, 1f)]
+    [Tooltip("Starting point of the area (in grid coordinates).")]
+    [DisableIf("seed")]
+    public Vector2Int startPoint = new(0, 0);
+
+    [FormerlySerializedAs("topRightCorner")]
+    [BoxGroup("Settings/General/Area Bounds")]
+    [LabelText("Size"), GUIColor(0.8f, 0.95f, 1f)]
+    [Tooltip("The size of the dungeon.")]
+    public Vector2Int dungeonSize = new(500, 200);
+
+    [TabGroup("Settings", "Division", SdfIconType.LayoutThreeColumns)]
+    [BoxGroup("Settings/Division/Config")]
+    [MinValue(1), LabelText("Division Count")]
+    [Tooltip("How many times the room can be divided.")]
     public int divisions = 1;
+
+    [BoxGroup("Settings/Division/Config")]
+    [MinValue(1), LabelText("Minimum Room Size")]
+    [Tooltip("Rooms smaller than this size will be discarded.")]
     public int sizeConstrain = 30;
+
+    [BoxGroup("Settings/Division/Config")]
+    [Range(1f, 5f), LabelText("Acceptable Aspect Ratio")]
+    [Tooltip("Max allowed ratio between width and height of a room.")]
     public float acceptableRatio = 1.5f;
-    [Title("Misc")]
+
+    [TabGroup("Settings", "Structure", SdfIconType.HouseFill)]
+    [BoxGroup("Settings/Structure/Walls & Doors")]
+    [MinValue(0), LabelText("Wall Width")]
+    [Tooltip("Width of the generated wall (in grid units).")]
     public int wallWidth = 1;
+
+    [BoxGroup("Settings/Structure/Walls & Doors")]
+    [MinValue(0), LabelText("Wall Height")]
+    [Tooltip("Height of the generated wall (in Unity units).")]
     public int wallHeight = 5;
+
+    [BoxGroup("Settings/Structure/Walls & Doors")]
+    [MinValue(1), LabelText("Door Width")]
+    [Tooltip("Width of doors that connect rooms.")]
     public int doorWidth = 3;
+
+    [TabGroup("Settings", "Randomization", SdfIconType.Dice6Fill)]
+    [BoxGroup("Settings/Randomization/Seed")]
+    [InlineButton("RandomizeSeed", SdfIconType.Dice6Fill, "Randomize")]
+    [LabelText("Seed Value")]
+    [Tooltip("Seed used to initialize the procedural generation.")]
+    public int seed = 1;
     
     private List<Room> rooms = new();
     private List<Wall> walls = new();
+    private System.Random rnd;
 
     private readonly Color[] brightColors = new[]
     {
@@ -72,12 +115,27 @@ public class DungeonGenerator : MonoBehaviour
         Color.cyan,
         new Color(1f, 0.5f, 0f) // Orange
     };
+    
+    private void RandomizeSeed()
+    {
+        seed = Random.Range(0, int.MaxValue);
+    }
 
-    [Button("Regenerate Rooms")]
+    [HorizontalGroup("ActionButtons", Width = 0.5f)]
+    [Button("🎯 Generate Dungeon", ButtonSizes.Large), GUIColor(0.3f, 0.7f, 1f)]
+    private void NewGeneration()
+    {
+        RandomizeSeed();
+        RegenerateRooms();
+    }
+
+    [HorizontalGroup("ActionButtons", Width = 0.5f)]
+    [Button("♻️ Regenerate Dungeon", ButtonSizes.Large), GUIColor(0.2f, 1f, 0.6f)]
     private void RegenerateRooms()
     {
         rooms.Clear();
-        rooms.Add(new Room(new RectInt(bottomLeftCorner.x, bottomLeftCorner.y, topRightCorner.x, topRightCorner.y), SplitMethod.Horizontaly, Color.green));
+        rnd = new System.Random(seed);
+        rooms.Add(new Room(new RectInt(startPoint.x, startPoint.y, dungeonSize.x, dungeonSize.y), SplitMethod.Horizontaly, Color.green));
         walls.Clear();
 
         var failStreak = 0;
@@ -138,13 +196,13 @@ public class DungeonGenerator : MonoBehaviour
         switch (splitMethod)
         {
             case SplitMethod.Verticaly:
-                var newRoom1 = new RectInt(room.bounds.x, room.bounds.y, Random.Range(sizeConstrain, room.bounds.width - sizeConstrain) + offset,  room.bounds.height);
+                var newRoom1 = new RectInt(room.bounds.x, room.bounds.y, rnd.Next(sizeConstrain, room.bounds.width - sizeConstrain) + offset,  room.bounds.height);
                 var newRoom2 = new RectInt(newRoom1.xMax - offset, room.bounds.y, room.bounds.width - newRoom1.width + offset, room.bounds.height);
                 newRooms.Add(new Room(newRoom1, SplitMethod.Horizontaly, Color.cyan));
                 newRooms.Add(new Room(newRoom2, SplitMethod.Horizontaly, Color.cyan));
                 break;
             case SplitMethod.Horizontaly:
-                newRoom1 = new RectInt(room.bounds.x, room.bounds.y, room.bounds.width, Random.Range(sizeConstrain, room.bounds.height - sizeConstrain) + offset);
+                newRoom1 = new RectInt(room.bounds.x, room.bounds.y, room.bounds.width, rnd.Next(sizeConstrain, room.bounds.height - sizeConstrain) + offset);
                 newRoom2 = new RectInt(room.bounds.x, newRoom1.yMax - offset, room.bounds.width, room.bounds.height - newRoom1.height + offset);
                 newRooms.Add(new Room(newRoom1, SplitMethod.Verticaly, Color.cyan));
                 newRooms.Add(new Room(newRoom2, SplitMethod.Verticaly,Color.cyan));
@@ -189,10 +247,10 @@ public class DungeonGenerator : MonoBehaviour
                 }
             }
         }
-        var edgeWall1 = new Wall(new BoundsInt(new Vector3Int(0, 0, 0), new Vector3Int(wallWidth, wallHeight, topRightCorner.y)), Color.red, DoorDirection.None);
-        var edgeWall2 = new Wall(new BoundsInt(new Vector3Int(0, 0, topRightCorner.y - wallWidth), new Vector3Int(topRightCorner.x, wallHeight, wallWidth)), Color.red, DoorDirection.None);
-        var edgeWall3 = new Wall(new BoundsInt(new Vector3Int(topRightCorner.x - wallWidth, 0, 0), new Vector3Int(wallWidth, wallHeight, topRightCorner.y)), Color.red, DoorDirection.None);
-        var edgeWall4 = new Wall(new BoundsInt(new Vector3Int(0, 0, 0), new Vector3Int(topRightCorner.x, wallHeight, wallWidth)), Color.red, DoorDirection.None);
+        var edgeWall1 = new Wall(new BoundsInt(new Vector3Int(startPoint.x, 0, startPoint.y), new Vector3Int(wallWidth, wallHeight, dungeonSize.y)), Color.red, DoorDirection.None);
+        var edgeWall2 = new Wall(new BoundsInt(new Vector3Int(startPoint.x, 0, dungeonSize.y - wallWidth), new Vector3Int(dungeonSize.x, wallHeight, wallWidth)), Color.red, DoorDirection.None);
+        var edgeWall3 = new Wall(new BoundsInt(new Vector3Int(dungeonSize.x - wallWidth, 0, startPoint.y), new Vector3Int(wallWidth, wallHeight, dungeonSize.y)), Color.red, DoorDirection.None);
+        var edgeWall4 = new Wall(new BoundsInt(new Vector3Int(startPoint.x, 0, startPoint.y), new Vector3Int(dungeonSize.x, wallHeight, wallWidth)), Color.red, DoorDirection.None);
         walls.Add(edgeWall1);
         walls.Add(edgeWall2);
         walls.Add(edgeWall3);
@@ -202,9 +260,9 @@ public class DungeonGenerator : MonoBehaviour
     private bool CheckEdges(BoundsInt wall)
     {
         return (wall.xMin == 0 && wall.xMax == wallWidth) ||
-               (wall.xMin == topRightCorner.x - wallWidth && wall.xMax == topRightCorner.x) ||
+               (wall.xMin == dungeonSize.x - wallWidth && wall.xMax == dungeonSize.x) ||
                (wall.yMin == 0 && wall.yMax == wallWidth) ||
-               (wall.yMin == topRightCorner.y - wallWidth && wall.yMax == topRightCorner.y);
+               (wall.yMin == dungeonSize.y - wallWidth && wall.yMax == dungeonSize.y);
     }
 
     private void CleanUp()
