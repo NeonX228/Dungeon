@@ -115,6 +115,27 @@ public class DungeonGenerator : MonoBehaviour
     [Tooltip("Seed used to initialize the procedural generation.")]
     public int seed = 1;
     
+    [TabGroup("Settings", "Debug", SdfIconType.BugFill)]
+    [BoxGroup("Settings/Debug/Visibility")]
+    [LabelText("Show Labels")]
+    [GUIColor("@showLabels ? new Color(1f, 0.8f, 0.4f) : Color.gray")]
+    public bool showLabels;
+
+    [BoxGroup("Settings/Debug/Visibility")]
+    [LabelText("Show Doors")]
+    [GUIColor("@showDoors ? new Color(0.6f, 1f, 0.6f) : Color.gray")]
+    public bool showDoors;
+
+    [BoxGroup("Settings/Debug/Visibility")]
+    [LabelText("Show Floor")]
+    [GUIColor("@showFloor ? new Color(0.5f, 0.9f, 1f) : Color.gray")]
+    public bool showFloor;
+
+    [BoxGroup("Settings/Debug/Visibility")]
+    [LabelText("Show Walls")]
+    [GUIColor("@showWalls ? new Color(1f, 0.5f, 0.5f) : Color.gray")]
+    public bool showWalls;
+
     private List<Room> rooms = new();
     private List<Wall> walls = new();
     private List<Door> doors = new();
@@ -196,19 +217,28 @@ public class DungeonGenerator : MonoBehaviour
     }
     private void Update()
     {
-        foreach (var room in rooms)
+        if (showFloor)
         {
-            AlgorithmsUtils.DebugRectInt(room.bounds, room.color);
+            foreach (var room in rooms)
+            {
+                AlgorithmsUtils.DebugRectInt(room.bounds, room.color);
+            }
         }
 
-        foreach (var wall in walls)
+        if (showWalls)
         {
-            AlgorithmsUtils.DebugBoundsInt(wall.bounds, wall.color);
+            foreach (var wall in walls)
+            {
+                AlgorithmsUtils.DebugBoundsInt(wall.bounds, wall.color);
+            }
         }
 
-        foreach (var door in doors)
+        if (showDoors)
         {
-            AlgorithmsUtils.DebugBoundsInt(door.bounds, door.color);
+            foreach (var door in doors)
+            {
+                AlgorithmsUtils.DebugBoundsInt(door.bounds, door.color);
+            }
         }
     }
 
@@ -311,43 +341,56 @@ public class DungeonGenerator : MonoBehaviour
         style.normal.textColor = Color.white;
         style.fontStyle = FontStyle.Bold;
         style.alignment = TextAnchor.MiddleCenter;
-        
-        for (int i = 0; i < walls.Count; i++)
+        if (showWalls)
         {
-            var wall = walls[i];
-            var color = wall.color;
-            color.a = 0.3f;
-            Gizmos.color = color;
-            Vector3 center = wall.bounds.center;
-            Gizmos.DrawCube(center, wall.bounds.size);
+            for (int i = 0; i < walls.Count; i++)
+            {
+                var wall = walls[i];
+                var color = wall.color;
+                color.a = 0.3f;
+                Gizmos.color = color;
+                Vector3 center = wall.bounds.center;
+                Gizmos.DrawCube(center, wall.bounds.size);
+                if (showLabels)
+                {
 #if UNITY_EDITOR
-            Handles.Label(center, $"*{i}", style);
+                    Handles.Label(center, $"*{i}", style);
 #endif
+                }
+            }
         }
         
         style.normal.textColor = Color.gray;
-        
-        for (int i = 0; i < rooms.Count; i++)
+        if (showFloor)
         {
-            var room = rooms[i];
-            var color = room.color;
-            color.a = 0.3f;
-            Gizmos.color = color;
-            Vector3 center = new Vector3(room.bounds.center.x, 0, room.bounds.center.y);
-            var size = new Vector3(room.bounds.size.x, 0.01f, room.bounds.size.y);
-            Gizmos.DrawCube(center, size);
+            for (int i = 0; i < rooms.Count; i++)
+            {
+                var room = rooms[i];
+                var color = room.color;
+                color.a = 0.3f;
+                Gizmos.color = color;
+                Vector3 center = new Vector3(room.bounds.center.x, 0, room.bounds.center.y);
+                var size = new Vector3(room.bounds.size.x, 0.01f, room.bounds.size.y);
+                Gizmos.DrawCube(center, size);
+                if (showLabels)
+                {
 #if UNITY_EDITOR
-            Handles.Label(center, $"#{i}", style);
+                    Handles.Label(center, $"#{i}", style);
 #endif
+                }
+            }
         }
 
-        foreach (var door in doors)
+        if (showDoors)
         {
-            var color = door.color;
-            color.a = 0.3f;
-            Gizmos.color = color;
-            Vector3 center = door.bounds.center;
-            Gizmos.DrawCube(center, door.bounds.size);
+            foreach (var door in doors)
+            {
+                var color = door.color;
+                color.a = 0.3f;
+                Gizmos.color = color;
+                Vector3 center = door.bounds.center;
+                Gizmos.DrawCube(center, door.bounds.size);
+            }
         }
     }
 }

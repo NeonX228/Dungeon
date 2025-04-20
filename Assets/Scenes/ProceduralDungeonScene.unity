@@ -461,9 +461,14 @@ MonoBehaviour:
   sizeConstrain: 50
   acceptableRatio: 2
   wallWidth: 2
-  wallHeight: 20
+  wallHeight: 15
   doorWidth: 10
-  seed: 1
+  doorOffset: 1
+  seed: 164181754
+  showLabels: 1
+  showDoors: 1
+  showFloor: 1
+  showWalls: 1
 --- !u!4 &1107614755
 Transform:
   m_ObjectHideFlags: 0
