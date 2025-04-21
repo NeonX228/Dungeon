@@ -18,31 +18,35 @@ internal enum DoorDirection
     None
 }
 
-internal class Room
+internal class Node
+{
+    public Color color;
+    public BoundsInt bounds;
+}
+
+internal class Room: Node
 {
     public Room(RectInt roomRect, SplitMethod lastSplitMethod, Color roomColor)
     {
-        bounds = roomRect;
+        bounds = new BoundsInt(new Vector3Int(roomRect.x, 0, roomRect.y), new Vector3Int(roomRect.width, 0, roomRect.height));
+        rectBounds = roomRect;
         splitMethod = lastSplitMethod;
         color = roomColor;
     }
-    public RectInt bounds;
+    public RectInt rectBounds;
     public SplitMethod splitMethod;
-    public Color color;
 }
 
-internal class Door
+internal class Door: Node
 {
     public Door(BoundsInt doorBounds, Color doorColor)
     {
         bounds = doorBounds;
         color = doorColor;
     }
-    public BoundsInt bounds;
-    public Color color;
 }
 
-internal class Wall
+internal class Wall: Node
 {
     public Wall(BoundsInt wallBounds, Color wallColor, DoorDirection targetDoorDirection)
     {
@@ -50,10 +54,35 @@ internal class Wall
         color = wallColor;
         doorDirection = targetDoorDirection;
     }
-    public BoundsInt bounds;
-    public Color color;
     public DoorDirection doorDirection;
+    public Door door;
+    public List<Room> rooms = new List<Room>();
+}
+
+public class Graph<T>
+{
+    private Dictionary<T, List<T>> adjacencyList = new();
+
+    public void AddNode(T node)
+    {
+        if (adjacencyList.ContainsKey(node)) return;
+
+        adjacencyList.Add(node, new List<T>());
+    }
+
+    public void AddEdge(T fromNode, T toNode)
+    {
+        if (!adjacencyList.ContainsKey(fromNode))
+        {
+            adjacencyList.Add(fromNode, new List<T>());
+        }
+
+        adjacencyList[fromNode].Add(toNode);
+    }
     
+    public Dictionary<T, List<T>> GetList(){ return adjacencyList; }
+    
+    public void DropTable() {adjacencyList.Clear();}
 }
 
 [ExecuteAlways]
@@ -135,11 +164,22 @@ public class DungeonGenerator : MonoBehaviour
     [LabelText("Show Walls")]
     [GUIColor("@showWalls ? new Color(1f, 0.5f, 0.5f) : Color.gray")]
     public bool showWalls;
+    
+    [BoxGroup("Settings/Debug/Visibility")]
+    [LabelText("Show Nodes")]
+    [GUIColor("@showNodes ? new Color(0.7f, 0.7f, 1f) : Color.gray")]
+    public bool showNodes;
+
+    [BoxGroup("Settings/Debug/Visibility")]
+    [LabelText("Show Edges")]
+    [GUIColor("@showEdges ? new Color(0.9f, 0.6f, 1f) : Color.gray")]
+    public bool showEdges;
 
     private List<Room> rooms = new();
     private List<Wall> walls = new();
     private List<Door> doors = new();
     private System.Random rnd;
+    private Graph<Node> graph = new();
 
     private readonly Color[] brightColors = new[]
     {
@@ -174,6 +214,7 @@ public class DungeonGenerator : MonoBehaviour
         rooms.Add(new Room(new RectInt(startPoint.x, startPoint.y, dungeonSize.x, dungeonSize.y), SplitMethod.Horizontaly, Color.green));
         walls.Clear();
         doors.Clear();
+        graph.DropTable();
 
         var failStreak = 0;
         // Add new split room to the list
@@ -181,19 +222,19 @@ public class DungeonGenerator : MonoBehaviour
         {
             var tempRoom = rooms[0];
             rooms.RemoveAt(0);
-            if (tempRoom.bounds.width > sizeConstrain * 2 && tempRoom.bounds.height > sizeConstrain * 2)
+            if (tempRoom.rectBounds.width > sizeConstrain * 2 && tempRoom.rectBounds.height > sizeConstrain * 2)
             {
                 // Do nothing
             }
-            else if (tempRoom.bounds.width < sizeConstrain * 2
-                && tempRoom.bounds.height > sizeConstrain * 2
-                && tempRoom.bounds.width * acceptableRatio < tempRoom.bounds.height)
+            else if (tempRoom.rectBounds.width < sizeConstrain * 2
+                && tempRoom.rectBounds.height > sizeConstrain * 2
+                && tempRoom.rectBounds.width * acceptableRatio < tempRoom.rectBounds.height)
             {
                 tempRoom.splitMethod = SplitMethod.Horizontaly;
             }
-            else if (tempRoom.bounds.height < sizeConstrain * 2
-                     && tempRoom.bounds.width > sizeConstrain * 2
-                     && tempRoom.bounds.height * acceptableRatio < tempRoom.bounds.width)
+            else if (tempRoom.rectBounds.height < sizeConstrain * 2
+                     && tempRoom.rectBounds.width > sizeConstrain * 2
+                     && tempRoom.rectBounds.height * acceptableRatio < tempRoom.rectBounds.width)
             {
                 tempRoom.splitMethod = SplitMethod.Verticaly;
             }
@@ -203,9 +244,9 @@ public class DungeonGenerator : MonoBehaviour
                 rooms.Add(tempRoom);
                 if (failStreak >= rooms.Count)
                 {
-                    Debug.Log($"Regenerating rooms ended on division: {i}");
                     BuildTheWall();
                     PlaceDoors();
+                    MakeConnections();
                     return;
                 }
                 continue;
@@ -213,7 +254,6 @@ public class DungeonGenerator : MonoBehaviour
             failStreak = 0;
             rooms.AddRange(SplitRoom(tempRoom, tempRoom.splitMethod, wallWidth));
         }
-        Debug.Log("Rooms generated successfully");
     }
     private void Update()
     {
@@ -221,7 +261,7 @@ public class DungeonGenerator : MonoBehaviour
         {
             foreach (var room in rooms)
             {
-                AlgorithmsUtils.DebugRectInt(room.bounds, room.color);
+                AlgorithmsUtils.DebugRectInt(room.rectBounds, room.color);
             }
         }
 
@@ -248,14 +288,14 @@ public class DungeonGenerator : MonoBehaviour
         switch (splitMethod)
         {
             case SplitMethod.Verticaly:
-                var newRoom1 = new RectInt(room.bounds.x, room.bounds.y, rnd.Next(sizeConstrain, room.bounds.width - sizeConstrain) + offset,  room.bounds.height);
-                var newRoom2 = new RectInt(newRoom1.xMax - offset, room.bounds.y, room.bounds.width - newRoom1.width + offset, room.bounds.height);
+                var newRoom1 = new RectInt(room.rectBounds.x, room.rectBounds.y, rnd.Next(sizeConstrain, room.rectBounds.width - sizeConstrain) + offset,  room.rectBounds.height);
+                var newRoom2 = new RectInt(newRoom1.xMax - offset, room.rectBounds.y, room.rectBounds.width - newRoom1.width + offset, room.rectBounds.height);
                 newRooms.Add(new Room(newRoom1, SplitMethod.Horizontaly, Color.cyan));
                 newRooms.Add(new Room(newRoom2, SplitMethod.Horizontaly, Color.cyan));
                 break;
             case SplitMethod.Horizontaly:
-                newRoom1 = new RectInt(room.bounds.x, room.bounds.y, room.bounds.width, rnd.Next(sizeConstrain, room.bounds.height - sizeConstrain) + offset);
-                newRoom2 = new RectInt(room.bounds.x, newRoom1.yMax - offset, room.bounds.width, room.bounds.height - newRoom1.height + offset);
+                newRoom1 = new RectInt(room.rectBounds.x, room.rectBounds.y, room.rectBounds.width, rnd.Next(sizeConstrain, room.rectBounds.height - sizeConstrain) + offset);
+                newRoom2 = new RectInt(room.rectBounds.x, newRoom1.yMax - offset, room.rectBounds.width, room.rectBounds.height - newRoom1.height + offset);
                 newRooms.Add(new Room(newRoom1, SplitMethod.Verticaly, Color.cyan));
                 newRooms.Add(new Room(newRoom2, SplitMethod.Verticaly,Color.cyan));
                 break;
@@ -271,32 +311,33 @@ public class DungeonGenerator : MonoBehaviour
             {
                 var firstRoom = rooms[i];
                 var secondRoom = rooms[j];
+
+                if (!AlgorithmsUtils.Intersects(firstRoom.rectBounds, secondRoom.rectBounds)) continue;
                 
-                if (AlgorithmsUtils.Intersects(firstRoom.bounds, secondRoom.bounds))
+                var intersect = AlgorithmsUtils.Intersect(firstRoom.rectBounds, secondRoom.rectBounds);
+                var tempBox = new BoundsInt(new Vector3Int(intersect.x, 0, intersect.y),
+                    new Vector3Int(intersect.width, wallHeight, intersect.height));
+                if ((tempBox.size.x != wallWidth) && (tempBox.size.x != wallWidth * 2) &&
+                    (tempBox.size.z != wallWidth) && (tempBox.size.z != wallWidth * 2))
                 {
-                    var intersect = AlgorithmsUtils.Intersect(firstRoom.bounds, secondRoom.bounds);
-                    var tempBox = new BoundsInt(new Vector3Int(intersect.x, 0, intersect.y),
-                        new Vector3Int(intersect.width, wallHeight, intersect.height));
-                    if ((tempBox.size.x != wallWidth) && (tempBox.size.x != wallWidth * 2) &&
-                        (tempBox.size.z != wallWidth) && (tempBox.size.z != wallWidth * 2))
-                    {
-                        continue;
-                    }
-                    var adaptiveColor = Color.red;
-                    var doorDirection = DoorDirection.None;
-                    if (tempBox.size.x > doorWidth + wallWidth * 2)
-                    {
-                        adaptiveColor = Color.green;
-                        doorDirection = DoorDirection.Z;
-                    }
-                    else if (tempBox.size.z > doorWidth + wallWidth * 2)
-                    {
-                        adaptiveColor = Color.green;
-                        doorDirection = DoorDirection.X;
-                    }
-                    var tempWall = new Wall(tempBox, adaptiveColor, doorDirection);
-                    walls.Add(tempWall);
+                    continue;
                 }
+                var adaptiveColor = Color.red;
+                var doorDirection = DoorDirection.None;
+                if (tempBox.size.x > doorWidth + wallWidth * 2)
+                {
+                    adaptiveColor = Color.green;
+                    doorDirection = DoorDirection.Z;
+                }
+                else if (tempBox.size.z > doorWidth + wallWidth * 2)
+                {
+                    adaptiveColor = Color.green;
+                    doorDirection = DoorDirection.X;
+                }
+                var tempWall = new Wall(tempBox, adaptiveColor, doorDirection);
+                tempWall.rooms.Add(firstRoom);
+                tempWall.rooms.Add(secondRoom);
+                walls.Add(tempWall);
             }
         }
         var edgeWall1 = new Wall(new BoundsInt(new Vector3Int(startPoint.x, 0, startPoint.y), new Vector3Int(wallWidth, wallHeight, dungeonSize.y)), Color.red, DoorDirection.None);
@@ -322,6 +363,7 @@ public class DungeonGenerator : MonoBehaviour
                     var zMin = wall.bounds.zMin + wallWidth;
                     var tempBounds = new BoundsInt(new Vector3Int(wall.bounds.xMin - doorOffset, 0, rnd.Next(zMin, zMax)), new Vector3Int(wallWidth + doorOffset * 2, wallHeight + doorOffset, doorWidth));
                     var tempDoor = new Door(tempBounds, Color.yellow);
+                    wall.door = tempDoor;
                     doors.Add(tempDoor);
                     break;
                 case DoorDirection.Z:
@@ -329,9 +371,24 @@ public class DungeonGenerator : MonoBehaviour
                     var xMin = wall.bounds.xMin + wallWidth;
                     tempBounds = new BoundsInt(new Vector3Int(rnd.Next(xMin, xMax), 0, wall.bounds.zMin - doorOffset), new Vector3Int(doorWidth, wallHeight + doorOffset, wallWidth + doorOffset * 2));
                     tempDoor = new Door(tempBounds, Color.yellow);
+                    wall.door = tempDoor;
                     doors.Add(tempDoor);
                     break;
             }
+        }
+    }
+
+    private void MakeConnections()
+    {
+        foreach (var wall in walls)
+        {
+            if (wall.doorDirection is DoorDirection.None) continue;
+            
+            graph.AddNode(wall.rooms[0]);
+            graph.AddNode(wall.rooms[1]);
+            
+            graph.AddEdge(wall.rooms[0], wall.door);
+            graph.AddEdge(wall.rooms[1], wall.door);
         }
     }
 
@@ -369,8 +426,8 @@ public class DungeonGenerator : MonoBehaviour
                 var color = room.color;
                 color.a = 0.3f;
                 Gizmos.color = color;
-                Vector3 center = new Vector3(room.bounds.center.x, 0, room.bounds.center.y);
-                var size = new Vector3(room.bounds.size.x, 0.01f, room.bounds.size.y);
+                Vector3 center = new Vector3(room.rectBounds.center.x, 0, room.rectBounds.center.y);
+                var size = new Vector3(room.rectBounds.size.x, 0.01f, room.rectBounds.size.y);
                 Gizmos.DrawCube(center, size);
                 if (showLabels)
                 {
@@ -390,6 +447,28 @@ public class DungeonGenerator : MonoBehaviour
                 Gizmos.color = color;
                 Vector3 center = door.bounds.center;
                 Gizmos.DrawCube(center, door.bounds.size);
+            }
+        }
+        
+        var connectionsList = graph.GetList();
+        Gizmos.color = Color.white;
+        foreach (var node in connectionsList.Keys)
+        {
+            if (showNodes)
+            {
+                Gizmos.DrawSphere(node.bounds.center, 1);
+            }
+            foreach (var door in connectionsList[node])
+            {
+                if (showNodes)
+                {
+                    Gizmos.DrawSphere(door.bounds.center, 1);
+                }
+
+                if (showEdges)
+                {
+                    Gizmos.DrawLine(node.bounds.center, door.bounds.center);
+                }
             }
         }
     }

@@ -456,19 +456,21 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   startPoint: {x: 0, y: 0}
-  dungeonSize: {x: 200, y: 200}
-  divisions: 10000
+  dungeonSize: {x: 2000, y: 2000}
+  divisions: 10000000
   sizeConstrain: 50
   acceptableRatio: 2
   wallWidth: 2
   wallHeight: 15
   doorWidth: 10
-  doorOffset: 1
-  seed: 164181754
-  showLabels: 1
+  doorOffset: 0
+  seed: 880276387
+  showLabels: 0
   showDoors: 1
   showFloor: 1
   showWalls: 1
+  showNodes: 0
+  showEdges: 0
 --- !u!4 &1107614755
 Transform:
   m_ObjectHideFlags: 0
