@@ -1,9 +1,11 @@
+using System;
 using System.Collections;
 using UnityEngine;
 using System.Collections.Generic;
 using Sirenix.OdinInspector;
 using UnityEditor;
 using UnityEngine.Serialization;
+using Random = UnityEngine.Random;
 
 internal enum SplitMethod
 {
@@ -18,6 +20,16 @@ internal enum DoorDirection
     None
 }
 
+internal class Connection
+{
+    public Connection(Node to, Node door)
+    {
+        node = to;
+        via = door;
+    }
+    public Node node;
+    public Node via;
+}
 internal class Node
 {
     public Color color;
@@ -59,28 +71,28 @@ internal class Wall: Node
     public List<Room> rooms = new List<Room>();
 }
 
-public class Graph<T>
+public class Graph<TKey, TValue>
 {
-    private Dictionary<T, List<T>> adjacencyList = new();
+    private Dictionary<TKey, List<TValue>> adjacencyList = new();
 
-    public void AddNode(T node)
+    public void AddNode(TKey node)
     {
         if (adjacencyList.ContainsKey(node)) return;
 
-        adjacencyList.Add(node, new List<T>());
+        adjacencyList.Add(node, new List<TValue>());
     }
 
-    public void AddEdge(T fromNode, T toNode)
+    public void AddEdge(TKey fromNode, TValue toNode)
     {
         if (!adjacencyList.ContainsKey(fromNode))
         {
-            adjacencyList.Add(fromNode, new List<T>());
+            adjacencyList.Add(fromNode, new List<TValue>());
         }
 
         adjacencyList[fromNode].Add(toNode);
     }
     
-    public Dictionary<T, List<T>> GetList(){ return adjacencyList; }
+    public Dictionary<TKey, List<TValue>> GetList(){ return adjacencyList; }
     
     public void DropTable() {adjacencyList.Clear();}
 }
@@ -104,8 +116,15 @@ public class DungeonGenerator : MonoBehaviour
 
     [TabGroup("Settings", "Division", SdfIconType.LayoutThreeColumns)]
     [BoxGroup("Settings/Division/Config")]
+    [MinValue(1), LabelText("Endless Divisions")]
+    [Tooltip("How many times the room can be divided.")]
+    public bool endlessDivisions = false;
+    
+    [TabGroup("Settings", "Division", SdfIconType.LayoutThreeColumns)]
+    [BoxGroup("Settings/Division/Config")]
     [MinValue(1), LabelText("Division Count")]
     [Tooltip("How many times the room can be divided.")]
+    [HideIf("endlessDivisions")]
     public int divisions = 1;
 
     [BoxGroup("Settings/Division/Config")]
@@ -179,22 +198,19 @@ public class DungeonGenerator : MonoBehaviour
     private List<Wall> walls = new();
     private List<Door> doors = new();
     private System.Random rnd;
-    private Graph<Node> graph = new();
-
-    private readonly Color[] brightColors = new[]
-    {
-        Color.red,
-        Color.blue,
-        Color.green,
-        new Color(1f, 0f, 1f), // Pink
-        Color.yellow,
-        Color.cyan,
-        new Color(1f, 0.5f, 0f) // Orange
-    };
+    private Graph<Node, Connection> graph = new();
     
     private void RandomizeSeed()
     {
         seed = Random.Range(0, int.MaxValue);
+    }
+
+    private void Start()
+    {
+        if (endlessDivisions)
+        {
+            divisions = 10;
+        }
     }
 
     [HorizontalGroup("ActionButtons", Width = 0.5f)]
@@ -220,6 +236,8 @@ public class DungeonGenerator : MonoBehaviour
         // Add new split room to the list
         for (var i = 0; i < divisions; i++)
         {
+            if (endlessDivisions) divisions++;
+            
             var tempRoom = rooms[0];
             rooms.RemoveAt(0);
             if (tempRoom.rectBounds.width > sizeConstrain * 2 && tempRoom.rectBounds.height > sizeConstrain * 2)
@@ -385,10 +403,9 @@ public class DungeonGenerator : MonoBehaviour
             if (wall.doorDirection is DoorDirection.None) continue;
             
             graph.AddNode(wall.rooms[0]);
-            graph.AddNode(wall.rooms[1]);
-            
-            graph.AddEdge(wall.rooms[0], wall.door);
-            graph.AddEdge(wall.rooms[1], wall.door);
+
+            var connection = new Connection(wall.rooms[1], wall.door);
+            graph.AddEdge(wall.rooms[0], connection);
         }
     }
 
@@ -458,16 +475,12 @@ public class DungeonGenerator : MonoBehaviour
             {
                 Gizmos.DrawSphere(node.bounds.center, 1);
             }
-            foreach (var door in connectionsList[node])
+            foreach (var connection in connectionsList[node])
             {
-                if (showNodes)
-                {
-                    Gizmos.DrawSphere(door.bounds.center, 1);
-                }
-
                 if (showEdges)
                 {
-                    Gizmos.DrawLine(node.bounds.center, door.bounds.center);
+                    Gizmos.DrawLine(node.bounds.center, connection.via.bounds.center);
+                    Gizmos.DrawLine(connection.via.bounds.center, connection.node.bounds.center);
                 }
             }
         }
