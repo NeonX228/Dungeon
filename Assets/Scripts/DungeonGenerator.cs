@@ -2,7 +2,9 @@ using System;
 using System.Collections;
 using UnityEngine;
 using System.Collections.Generic;
+using System.Linq;
 using Sirenix.OdinInspector;
+using Sirenix.Serialization;
 using UnityEditor;
 using UnityEngine.Serialization;
 using Random = UnityEngine.Random;
@@ -32,10 +34,29 @@ internal class Connection
 }
 internal class Node
 {
+    [HideInInspector]
+    public bool enabled = true;
+    [HideInInspector]
     public Color color;
+    [HideInInspector]
     public BoundsInt bounds;
+    
+    [Button(ButtonSizes.Small, ButtonStyle.Box, Icon = SdfIconType.Search)]
+    [GUIColor(0.8f, 0.8f, 1f)]
+    [InfoBox("@\"Size: \" + GetSize().ToString()")]
+    [PropertyOrder(-1)]
+    public void Highlight()
+    {
+        AlgorithmsUtils.DebugBoundsInt(bounds, Color.magenta, 3f);
+    }
+    
+    public int GetSize()
+    {
+        return 2 * (bounds.size.x + bounds.size.z);
+    }
 }
 
+[Serializable]
 internal class Room: Node
 {
     public Room(RectInt roomRect, SplitMethod lastSplitMethod, Color roomColor)
@@ -45,8 +66,58 @@ internal class Room: Node
         splitMethod = lastSplitMethod;
         color = roomColor;
     }
+    [HideInInspector]
     public RectInt rectBounds;
+    [HideInInspector]
     public SplitMethod splitMethod;
+    public List<Wall> walls = new();
+    
+    [EnableIf("enabled")]
+    [HorizontalGroup("Toggle")]
+    [Button(ButtonSizes.Medium), GUIColor("@enabled ? Color.red : Color.gray")]
+    public void Disable()
+    {
+        enabled = false;
+        foreach (var wall in walls)
+        {
+            if (wall.doorDirection != DoorDirection.None)
+            {
+                wall.door.enabled = false;
+                wall.doorDirection = DoorDirection.None;
+            }
+            wall.color = Color.red;
+        }
+    }
+    
+    [DisableIf("enabled")]
+    [HorizontalGroup("Toggle")]
+    [Button(ButtonSizes.Medium), GUIColor("@!enabled ? Color.green : Color.gray")]
+    public void Enable()
+    {
+        enabled = true;
+        foreach (var wall in walls)
+        {
+            if (!wall.rooms.All(room => room.enabled)) continue;
+            
+            if (wall.bounds.size.x > DungeonGenerator.doorWidth + DungeonGenerator.wallWidth * 2)
+            {
+                wall.color = Color.green;
+                wall.doorDirection = DoorDirection.Z;
+            }
+            else if (wall.bounds.size.z > DungeonGenerator.doorWidth + DungeonGenerator.wallWidth * 2)
+            {
+                wall.color = Color.green;
+                wall.doorDirection = DoorDirection.X;
+            }
+            else
+            {
+                wall.color = Color.red;
+                wall.doorDirection = DoorDirection.None;
+            }
+            
+            if (wall.doorDirection != DoorDirection.None) wall.door.enabled = true;
+        }
+    }
 }
 
 internal class Door: Node
@@ -66,9 +137,11 @@ internal class Wall: Node
         color = wallColor;
         doorDirection = targetDoorDirection;
     }
+    [HideInInspector]
     public DoorDirection doorDirection;
     public Door door;
-    public List<Room> rooms = new List<Room>();
+    [HideInInspector]
+    public List<Room> rooms = new();
 }
 
 public class Graph<TKey, TValue>
@@ -100,17 +173,15 @@ public class Graph<TKey, TValue>
 [ExecuteAlways]
 public class DungeonGenerator : MonoBehaviour
 {
-    [FormerlySerializedAs("bottomLeftCorner")]
     [TabGroup("Settings", "General", SdfIconType.GearFill)]
     [BoxGroup("Settings/General/Area Bounds")]
-    [LabelText("Starting point"), GUIColor(0.8f, 0.95f, 1f)]
+    [LabelText("Starting point")]
     [Tooltip("Starting point of the area (in grid coordinates).")]
     [DisableIf("seed")]
     public Vector2Int startPoint = new(0, 0);
-
-    [FormerlySerializedAs("topRightCorner")]
+    
     [BoxGroup("Settings/General/Area Bounds")]
-    [LabelText("Size"), GUIColor(0.8f, 0.95f, 1f)]
+    [LabelText("Size")]
     [Tooltip("The size of the dungeon.")]
     public Vector2Int dungeonSize = new(500, 200);
 
@@ -141,20 +212,29 @@ public class DungeonGenerator : MonoBehaviour
     [BoxGroup("Settings/Structure/Walls & Doors")]
     [MinValue(0), LabelText("Wall Width")]
     [Tooltip("Width of the generated wall (in grid units).")]
-    public int wallWidth = 1;
+    [ShowInInspector]
+    public static int wallWidth = 1;
 
     [BoxGroup("Settings/Structure/Walls & Doors")]
     [MinValue(0), LabelText("Wall Height")]
     [Tooltip("Height of the generated wall (in Unity units).")]
-    public int wallHeight = 5;
+    [ShowInInspector]
+    public static int wallHeight = 5;
 
     [BoxGroup("Settings/Structure/Walls & Doors")]
     [MinValue(1), LabelText("Door Width")]
     [Tooltip("Width of doors that connect rooms.")]
-    public int doorWidth = 3;
+    [ShowInInspector]
+    public static int doorWidth = 3;
+    
     [BoxGroup("Settings/Structure/Walls & Doors")]
     [MinValue(0), LabelText("Door Offset")]
-    public int doorOffset = 1;
+    [ShowInInspector]
+    public static int doorOffset = 1;
+    
+    [BoxGroup("Settings/Structure/Rooms")]
+    [MinValue(0), MaxValue(100), LabelText("Subtracted Percent")]
+    public int subtractedPercent = 10;
 
     [TabGroup("Settings", "Randomization", SdfIconType.Dice6Fill)]
     [BoxGroup("Settings/Randomization/Seed")]
@@ -193,7 +273,12 @@ public class DungeonGenerator : MonoBehaviour
     [LabelText("Show Edges")]
     [GUIColor("@showEdges ? new Color(0.9f, 0.6f, 1f) : Color.gray")]
     public bool showEdges;
-
+    
+    [TabGroup("Settings", "Structure", SdfIconType.HouseFill)]
+    [BoxGroup("Settings/Structure/Rooms")]
+    [LabelText("All Rooms List")]
+    [SerializeField]
+    [ListDrawerSettings(DraggableItems = false, HideAddButton = true, HideRemoveButton = true, NumberOfItemsPerPage = 8)]
     private List<Room> rooms = new();
     private List<Wall> walls = new();
     private List<Door> doors = new();
@@ -215,6 +300,8 @@ public class DungeonGenerator : MonoBehaviour
 
     [HorizontalGroup("ActionButtons", Width = 0.5f)]
     [Button("🎯 Generate Dungeon", ButtonSizes.Large), GUIColor(0.3f, 0.7f, 1f)]
+    [PropertyOrder(-1)]
+    [PropertySpace(SpaceAfter = 10)]
     private void NewGeneration()
     {
         RandomizeSeed();
@@ -223,6 +310,8 @@ public class DungeonGenerator : MonoBehaviour
 
     [HorizontalGroup("ActionButtons", Width = 0.5f)]
     [Button("♻️ Regenerate Dungeon", ButtonSizes.Large), GUIColor(0.2f, 1f, 0.6f)]
+    [PropertyOrder(-1)]
+    [PropertySpace(SpaceAfter = 10)]
     private void RegenerateRooms()
     {
         rooms.Clear();
@@ -262,9 +351,7 @@ public class DungeonGenerator : MonoBehaviour
                 rooms.Add(tempRoom);
                 if (failStreak >= rooms.Count)
                 {
-                    BuildTheWall();
-                    PlaceDoors();
-                    MakeConnections();
+                    AfterGeneration();
                     return;
                 }
                 continue;
@@ -273,12 +360,23 @@ public class DungeonGenerator : MonoBehaviour
             rooms.AddRange(SplitRoom(tempRoom, tempRoom.splitMethod, wallWidth));
         }
     }
+
+    private void AfterGeneration()
+    {
+        BuildTheWall();
+        PlaceDoors();
+        MakeConnections();
+        rooms.Sort((r1, r2) => r1.GetSize().CompareTo(r2.GetSize()));
+        CuttingRooms();
+        CleanUpDoors();
+    }
     private void Update()
     {
         if (showFloor)
         {
             foreach (var room in rooms)
             {
+                if (!room.enabled) continue;
                 AlgorithmsUtils.DebugRectInt(room.rectBounds, room.color);
             }
         }
@@ -295,6 +393,7 @@ public class DungeonGenerator : MonoBehaviour
         {
             foreach (var door in doors)
             {
+                if (!door.enabled) continue;
                 AlgorithmsUtils.DebugBoundsInt(door.bounds, door.color);
             }
         }
@@ -353,6 +452,8 @@ public class DungeonGenerator : MonoBehaviour
                     doorDirection = DoorDirection.X;
                 }
                 var tempWall = new Wall(tempBox, adaptiveColor, doorDirection);
+                firstRoom.walls.Add(tempWall);
+                secondRoom.walls.Add(tempWall);
                 tempWall.rooms.Add(firstRoom);
                 tempWall.rooms.Add(secondRoom);
                 walls.Add(tempWall);
@@ -403,10 +504,60 @@ public class DungeonGenerator : MonoBehaviour
             if (wall.doorDirection is DoorDirection.None) continue;
             
             graph.AddNode(wall.rooms[0]);
+            graph.AddNode(wall.rooms[1]);
 
-            var connection = new Connection(wall.rooms[1], wall.door);
-            graph.AddEdge(wall.rooms[0], connection);
+            var connection1 = new Connection(wall.rooms[1], wall.door);
+            var connection2 = new Connection(wall.rooms[0], wall.door);
+            graph.AddEdge(wall.rooms[0], connection1);
+            graph.AddEdge(wall.rooms[1], connection2);
         }
+    }
+
+    private void CuttingRooms()
+    {
+        var targetAmount = rooms.Count - (int)(((float)rooms.Count / 100) * subtractedPercent);
+        while (rooms.Count(a => a.enabled) > targetAmount)
+        {
+            var room = rooms.First(a => a.enabled);
+            room.Disable();
+            if (BFS(graph.GetList().Keys.First(a => a.enabled))) continue;
+            room.Enable();
+            return;
+        }
+    }
+
+    private void CleanUpDoors()
+    {
+        var queue = new Queue<Door>();
+        foreach (var door in doors)
+        {
+            queue.Enqueue(door);
+        }
+        while (queue.Count > 0)
+        {
+            var door = queue.Dequeue();
+            door.enabled = false;
+            if (!BFS(graph.GetList().Keys.First(a => a.enabled))) door.enabled = true;
+        }
+    }
+
+    private bool BFS(Node startNode)
+    {
+        if (!startNode.enabled) return false;
+        
+        var queue = new Queue<Node>();
+        queue.Enqueue(startNode);
+        var visited = new HashSet<Node> { startNode };
+        while (queue.Count > 0)
+        {
+            var currentNode = queue.Dequeue();
+            foreach (var connection in graph.GetList()[currentNode])
+            {
+                if (!connection.node.enabled || !connection.via.enabled) continue;
+                if (visited.Add(connection.node)) queue.Enqueue(connection.node);
+            }
+        }
+        return visited.Count == rooms.Count(room => room.enabled);
     }
 
     private void OnDrawGizmos()
@@ -440,6 +591,7 @@ public class DungeonGenerator : MonoBehaviour
             for (int i = 0; i < rooms.Count; i++)
             {
                 var room = rooms[i];
+                if (!room.enabled) continue;
                 var color = room.color;
                 color.a = 0.3f;
                 Gizmos.color = color;
@@ -459,6 +611,7 @@ public class DungeonGenerator : MonoBehaviour
         {
             foreach (var door in doors)
             {
+                if (!door.enabled) continue;
                 var color = door.color;
                 color.a = 0.3f;
                 Gizmos.color = color;
@@ -473,12 +626,14 @@ public class DungeonGenerator : MonoBehaviour
         {
             if (showNodes)
             {
+                if (!node.enabled) continue;
                 Gizmos.DrawSphere(node.bounds.center, 1);
             }
             foreach (var connection in connectionsList[node])
             {
                 if (showEdges)
                 {
+                    if (!connection.node.enabled || !connection.via.enabled) continue;
                     Gizmos.DrawLine(node.bounds.center, connection.via.bounds.center);
                     Gizmos.DrawLine(connection.via.bounds.center, connection.node.bounds.center);
                 }
