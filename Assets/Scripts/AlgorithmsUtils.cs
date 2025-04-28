@@ -1,8 +1,8 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 public class AlgorithmsUtils
 {
-    
     public static bool Intersects(RectInt a, RectInt b)
     {
         return a.xMin < b.xMax &&
@@ -71,5 +71,30 @@ public class AlgorithmsUtils
 
         // Call your DebugExtension method (assuming it's available in your project)
         DebugExtension.DebugBounds(bounds, color, duration, depthTest: false);
+    }
+}
+
+public static class BoundsIntExt
+{
+    public static bool Intersects(this BoundsInt a, BoundsInt b)
+    {
+        return (a.xMin < b.xMax) && (a.xMax > b.xMin) &&
+               (a.yMin < b.yMax) && (a.yMax > b.yMin) &&
+               (a.zMin < b.zMax) && (a.zMax > b.zMin);
+    }
+    public static BoundsInt Intersect(BoundsInt a, BoundsInt b)
+    {
+        int x = Mathf.Max(a.xMin, b.xMin);
+        int y = Mathf.Max(a.yMin, b.yMin);
+        int z = Mathf.Max(a.zMin, b.zMin);
+        int width = Mathf.Min(a.xMax, b.xMax) - x;
+        int height = Mathf.Min(a.yMax, b.yMax) - y;
+        int depth = Mathf.Min(a.zMax, b.zMax) - z;
+
+        if (width <= 0 || height <= 0)
+        {
+            return new BoundsInt();
+        }
+        return new BoundsInt(x, y, z, width, height, depth);
     }
 }

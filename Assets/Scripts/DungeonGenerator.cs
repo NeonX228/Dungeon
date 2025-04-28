@@ -70,6 +70,7 @@ internal class Room: Node
     public RectInt rectBounds;
     [HideInInspector]
     public SplitMethod splitMethod;
+    [HideInInspector]
     public List<Wall> walls = new();
     
     [EnableIf("enabled")]
@@ -139,6 +140,7 @@ internal class Wall: Node
     }
     [HideInInspector]
     public DoorDirection doorDirection;
+    [HideInInspector]
     public Door door;
     [HideInInspector]
     public List<Room> rooms = new();
@@ -219,13 +221,13 @@ public class DungeonGenerator : MonoBehaviour
     [MinValue(0), LabelText("Wall Height")]
     [Tooltip("Height of the generated wall (in Unity units).")]
     [ShowInInspector]
-    public static int wallHeight = 5;
+    public static int wallHeight = 15;
 
     [BoxGroup("Settings/Structure/Walls & Doors")]
     [MinValue(1), LabelText("Door Width")]
     [Tooltip("Width of doors that connect rooms.")]
     [ShowInInspector]
-    public static int doorWidth = 3;
+    public static int doorWidth = 10;
     
     [BoxGroup("Settings/Structure/Walls & Doors")]
     [MinValue(0), LabelText("Door Offset")]
@@ -235,6 +237,10 @@ public class DungeonGenerator : MonoBehaviour
     [BoxGroup("Settings/Structure/Rooms")]
     [MinValue(0), MaxValue(100), LabelText("Subtracted Percent")]
     public int subtractedPercent = 10;
+    
+    [BoxGroup("Settings/Structure/Rooms")]
+    [LabelText("Subtract Walls")]
+    public bool subtractWalls = true;
 
     [TabGroup("Settings", "Randomization", SdfIconType.Dice6Fill)]
     [BoxGroup("Settings/Randomization/Seed")]
@@ -242,6 +248,11 @@ public class DungeonGenerator : MonoBehaviour
     [LabelText("Seed Value")]
     [Tooltip("Seed used to initialize the procedural generation.")]
     public int seed = 1;
+    
+    [TabGroup("Settings", "Modeling", SdfIconType.Bricks)]
+    [BoxGroup("Settings/Modeling/Prefabs")]
+    [LabelText("Wall Prefab")]
+    public GameObject wallPrefab;
     
     [TabGroup("Settings", "Debug", SdfIconType.BugFill)]
     [BoxGroup("Settings/Debug/Visibility")]
@@ -280,10 +291,12 @@ public class DungeonGenerator : MonoBehaviour
     [SerializeField]
     [ListDrawerSettings(DraggableItems = false, HideAddButton = true, HideRemoveButton = true, NumberOfItemsPerPage = 8)]
     private List<Room> rooms = new();
+    
     private List<Wall> walls = new();
     private List<Door> doors = new();
     private System.Random rnd;
     private Graph<Node, Connection> graph = new();
+    private List<GameObject> wallObjects = new();
     
     private void RandomizeSeed()
     {
@@ -320,6 +333,11 @@ public class DungeonGenerator : MonoBehaviour
         walls.Clear();
         doors.Clear();
         graph.DropTable();
+        foreach (var obj in wallObjects)
+        {
+            DestroyImmediate(obj);
+        }
+        wallObjects.Clear();
 
         var failStreak = 0;
         // Add new split room to the list
@@ -349,7 +367,7 @@ public class DungeonGenerator : MonoBehaviour
             {
                 failStreak++;
                 rooms.Add(tempRoom);
-                if (failStreak >= rooms.Count)
+                if (failStreak >= rooms.Count * 2)
                 {
                     AfterGeneration();
                     return;
@@ -369,6 +387,8 @@ public class DungeonGenerator : MonoBehaviour
         rooms.Sort((r1, r2) => r1.GetSize().CompareTo(r2.GetSize()));
         CuttingRooms();
         CleanUpDoors();
+        PlacingMeshes();
+        
     }
     private void Update()
     {
@@ -434,22 +454,27 @@ public class DungeonGenerator : MonoBehaviour
                 var intersect = AlgorithmsUtils.Intersect(firstRoom.rectBounds, secondRoom.rectBounds);
                 var tempBox = new BoundsInt(new Vector3Int(intersect.x, 0, intersect.y),
                     new Vector3Int(intersect.width, wallHeight, intersect.height));
-                if ((tempBox.size.x != wallWidth) && (tempBox.size.x != wallWidth * 2) &&
-                    (tempBox.size.z != wallWidth) && (tempBox.size.z != wallWidth * 2))
-                {
-                    continue;
-                }
                 var adaptiveColor = Color.red;
                 var doorDirection = DoorDirection.None;
-                if (tempBox.size.x > doorWidth + wallWidth * 2)
+                if (tempBox.size.x > tempBox.size.z)
                 {
-                    adaptiveColor = Color.green;
-                    doorDirection = DoorDirection.Z;
+                    // tempBox.position += new Vector3Int(wallWidth, 0, 0);
+                    // tempBox.size -= new Vector3Int(wallWidth * 2, 0, 0);
+                    if (tempBox.size.x > doorWidth + wallWidth * 2)
+                    {
+                        adaptiveColor = Color.green;
+                        doorDirection = DoorDirection.Z;
+                    }
                 }
-                else if (tempBox.size.z > doorWidth + wallWidth * 2)
+                else if (tempBox.size.z > tempBox.size.x)
                 {
-                    adaptiveColor = Color.green;
-                    doorDirection = DoorDirection.X;
+                    // tempBox.position += new Vector3Int(0, 0, wallWidth);
+                    // tempBox.size -= new Vector3Int(0, 0, wallWidth * 2);
+                    if (tempBox.size.z > doorWidth + wallWidth * 2)
+                    {
+                        adaptiveColor = Color.green;
+                        doorDirection = DoorDirection.X;
+                    }
                 }
                 var tempWall = new Wall(tempBox, adaptiveColor, doorDirection);
                 firstRoom.walls.Add(tempWall);
@@ -486,7 +511,7 @@ public class DungeonGenerator : MonoBehaviour
                     doors.Add(tempDoor);
                     break;
                 case DoorDirection.Z:
-                    var xMax = wall.bounds.xMax - wallWidth - doorWidth;
+                    var xMax = wall.bounds.xMax - doorWidth - wallWidth;
                     var xMin = wall.bounds.xMin + wallWidth;
                     tempBounds = new BoundsInt(new Vector3Int(rnd.Next(xMin, xMax), 0, wall.bounds.zMin - doorOffset), new Vector3Int(doorWidth, wallHeight + doorOffset, wallWidth + doorOffset * 2));
                     tempDoor = new Door(tempBounds, Color.yellow);
@@ -538,6 +563,39 @@ public class DungeonGenerator : MonoBehaviour
             var door = queue.Dequeue();
             door.enabled = false;
             if (!BFS(graph.GetList().Keys.First(a => a.enabled))) door.enabled = true;
+        }
+    }
+
+    private void PlacingMeshes()
+    {
+        if (wallPrefab == null) return;
+        var placedObjects = new List<Vector3>();
+        foreach (var wall in walls)
+        {
+            var doorEnabled = false;
+            if (wall.doorDirection is not DoorDirection.None)
+            {
+                if (wall.door.enabled)
+                {
+                    doorEnabled = true;
+                }
+            }
+
+            for (int z = wall.bounds.zMin; z < wall.bounds.zMax; z++)
+            {
+                for (int x = wall.bounds.xMin; x < wall.bounds.xMax; x++)
+                {
+                    var pos = new Vector3Int(x, 0, z);
+                    if (placedObjects.Contains(pos)) continue;
+                    placedObjects.Add(pos);
+                    if (doorEnabled)
+                    {
+                        if (wall.door.bounds.Contains(pos)) continue;
+                    }
+                    var tempObject = Instantiate(wallPrefab, pos + new Vector3(0.5f, 0.5f, 0.5f), Quaternion.identity);
+                    wallObjects.Add(tempObject);
+                }
+            }
         }
     }
 
