@@ -3,9 +3,14 @@ using System.Collections;
 using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
+using JetBrains.Annotations;
 using Sirenix.OdinInspector;
 using Sirenix.Serialization;
+using Unity.AI.Navigation;
+using Unity.Mathematics;
+using Unity.VisualScripting;
 using UnityEditor;
+using UnityEngine.AI;
 using UnityEngine.Serialization;
 using Random = UnityEngine.Random;
 
@@ -56,7 +61,6 @@ internal class Node
     }
 }
 
-[Serializable]
 internal class Room: Node
 {
     public Room(RectInt roomRect, SplitMethod lastSplitMethod, Color roomColor)
@@ -186,6 +190,21 @@ public class DungeonGenerator : MonoBehaviour
     [LabelText("Size")]
     [Tooltip("The size of the dungeon.")]
     public Vector2Int dungeonSize = new(500, 200);
+    
+    [BoxGroup("Settings/General/Misc")]
+    [LabelText("NavMesh Component")]
+    [Required]
+    public NavMeshSurface navMesh;
+    
+    [BoxGroup("Settings/General/Misc")]
+    [LabelText("Mesh Parental Object")]
+    [Required]
+    public Transform meshes;
+    
+    [BoxGroup("Settings/General/Misc")]
+    [LabelText("Player Object")]
+    [Required]
+    public Transform player;
 
     [TabGroup("Settings", "Division", SdfIconType.LayoutThreeColumns)]
     [BoxGroup("Settings/Division/Config")]
@@ -221,26 +240,22 @@ public class DungeonGenerator : MonoBehaviour
     [MinValue(0), LabelText("Wall Height")]
     [Tooltip("Height of the generated wall (in Unity units).")]
     [ShowInInspector]
-    public static int wallHeight = 15;
+    public static int wallHeight = 1;
 
     [BoxGroup("Settings/Structure/Walls & Doors")]
     [MinValue(1), LabelText("Door Width")]
     [Tooltip("Width of doors that connect rooms.")]
     [ShowInInspector]
-    public static int doorWidth = 10;
+    public static int doorWidth = 1;
     
     [BoxGroup("Settings/Structure/Walls & Doors")]
     [MinValue(0), LabelText("Door Offset")]
     [ShowInInspector]
-    public static int doorOffset = 1;
+    public static int doorOffset = 0;
     
     [BoxGroup("Settings/Structure/Rooms")]
     [MinValue(0), MaxValue(100), LabelText("Subtracted Percent")]
     public int subtractedPercent = 10;
-    
-    [BoxGroup("Settings/Structure/Rooms")]
-    [LabelText("Subtract Walls")]
-    public bool subtractWalls = true;
 
     [TabGroup("Settings", "Randomization", SdfIconType.Dice6Fill)]
     [BoxGroup("Settings/Randomization/Seed")]
@@ -252,7 +267,14 @@ public class DungeonGenerator : MonoBehaviour
     [TabGroup("Settings", "Modeling", SdfIconType.Bricks)]
     [BoxGroup("Settings/Modeling/Prefabs")]
     [LabelText("Wall Prefab")]
+    [Required]
     public GameObject wallPrefab;
+    
+    [TabGroup("Settings", "Modeling", SdfIconType.Bricks)]
+    [BoxGroup("Settings/Modeling/Prefabs")]
+    [LabelText("Floor Tile Prefab")]
+    [Required]
+    public GameObject floorPrefab;
     
     [TabGroup("Settings", "Debug", SdfIconType.BugFill)]
     [BoxGroup("Settings/Debug/Visibility")]
@@ -285,18 +307,17 @@ public class DungeonGenerator : MonoBehaviour
     [GUIColor("@showEdges ? new Color(0.9f, 0.6f, 1f) : Color.gray")]
     public bool showEdges;
     
-    [TabGroup("Settings", "Structure", SdfIconType.HouseFill)]
-    [BoxGroup("Settings/Structure/Rooms")]
-    [LabelText("All Rooms List")]
-    [SerializeField]
-    [ListDrawerSettings(DraggableItems = false, HideAddButton = true, HideRemoveButton = true, NumberOfItemsPerPage = 8)]
+    // [TabGroup("Settings", "Structure", SdfIconType.HouseFill)]
+    // [BoxGroup("Settings/Structure/Rooms")]
+    // [LabelText("All Rooms List")]
+    // [SerializeField]
+    // [ListDrawerSettings(DraggableItems = false, HideAddButton = true, HideRemoveButton = true, NumberOfItemsPerPage = 8)]
     private List<Room> rooms = new();
-    
     private List<Wall> walls = new();
     private List<Door> doors = new();
     private System.Random rnd;
     private Graph<Node, Connection> graph = new();
-    private List<GameObject> wallObjects = new();
+    private List<Vector3> safeSpawnPoints = new();
     
     private void RandomizeSeed()
     {
@@ -333,11 +354,10 @@ public class DungeonGenerator : MonoBehaviour
         walls.Clear();
         doors.Clear();
         graph.DropTable();
-        foreach (var obj in wallObjects)
-        {
-            DestroyImmediate(obj);
+        safeSpawnPoints.Clear();
+        while (meshes.childCount > 0) {
+            DestroyImmediate(meshes.GetChild(0).gameObject);
         }
-        wallObjects.Clear();
 
         var failStreak = 0;
         // Add new split room to the list
@@ -388,7 +408,8 @@ public class DungeonGenerator : MonoBehaviour
         CuttingRooms();
         CleanUpDoors();
         PlacingMeshes();
-        
+        PickSpawnLocation();
+        navMesh.BuildNavMesh();
     }
     private void Update()
     {
@@ -568,10 +589,14 @@ public class DungeonGenerator : MonoBehaviour
 
     private void PlacingMeshes()
     {
-        if (wallPrefab == null) return;
-        var placedObjects = new List<Vector3>();
+        if (wallPrefab == null || floorPrefab == null) return;
+        var placedObjects = new List<Vector3Int>();
+        var counter = 0;
+        var wallsParentalObject = new GameObject("Walls");
+        wallsParentalObject.transform.SetParent(meshes.transform);
         foreach (var wall in walls)
         {
+            counter++;
             var doorEnabled = false;
             if (wall.doorDirection is not DoorDirection.None)
             {
@@ -580,23 +605,52 @@ public class DungeonGenerator : MonoBehaviour
                     doorEnabled = true;
                 }
             }
-
+            
+            var wallParentalObject = new GameObject($"Wall-{counter}");
+            wallParentalObject.transform.SetParent(wallsParentalObject.transform);
+            
             for (int z = wall.bounds.zMin; z < wall.bounds.zMax; z++)
             {
                 for (int x = wall.bounds.xMin; x < wall.bounds.xMax; x++)
                 {
                     var pos = new Vector3Int(x, 0, z);
                     if (placedObjects.Contains(pos)) continue;
-                    placedObjects.Add(pos);
                     if (doorEnabled)
                     {
                         if (wall.door.bounds.Contains(pos)) continue;
                     }
-                    var tempObject = Instantiate(wallPrefab, pos + new Vector3(0.5f, 0.5f, 0.5f), Quaternion.identity);
-                    wallObjects.Add(tempObject);
+                    placedObjects.Add(pos);
+                    var tempObject = Instantiate(wallPrefab, pos + new Vector3(0.5f, 0.5f, 0.5f), Quaternion.identity, wallParentalObject.transform);
                 }
             }
         }
+        counter = 0;
+        var roomsParentalObject = new GameObject("Floor");
+        roomsParentalObject.transform.SetParent(meshes.transform);
+        foreach (var room in rooms.Where(room => room.enabled))
+        {
+            var roomParentalObject = new GameObject($"Room-{counter}");
+            roomParentalObject.transform.SetParent(roomsParentalObject.transform);
+            counter++;
+            
+            for (int z = room.bounds.zMin; z < room.bounds.zMax; z++)
+            {
+                for (int x = room.bounds.xMin; x < room.bounds.xMax; x++)
+                {
+                    var pos = new Vector3Int(x, 0, z);
+                    if (placedObjects.Contains(pos)) continue;
+                    placedObjects.Add(pos);
+                    var tempFloorObject = Instantiate(floorPrefab, pos + new Vector3(0.5f, 0, 0.5f), Quaternion.Euler(90f, 0, 0), roomParentalObject.transform);
+                }
+            }
+        }
+        
+    }
+
+    private void PickSpawnLocation()
+    {
+        player.position = rooms.Where(room => room.enabled).ToList()[rnd.Next(safeSpawnPoints.Count)].bounds.center;
+        player.position += new Vector3(0, 1, 0);
     }
 
     private bool BFS(Node startNode)
