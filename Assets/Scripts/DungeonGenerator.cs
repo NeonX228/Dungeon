@@ -1,17 +1,11 @@
+using UnityEngine;
+using UnityEditor;
 using System;
 using System.Collections;
-using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
-using JetBrains.Annotations;
 using Sirenix.OdinInspector;
-using Sirenix.Serialization;
 using Unity.AI.Navigation;
-using Unity.Mathematics;
-using Unity.VisualScripting;
-using UnityEditor;
-using UnityEngine.AI;
-using UnityEngine.Serialization;
 using Random = UnityEngine.Random;
 
 internal enum SplitMethod
@@ -205,6 +199,10 @@ public class DungeonGenerator : MonoBehaviour
     [LabelText("Player Object")]
     [Required]
     public Transform player;
+    
+    [BoxGroup("Settings/General/Misc")]
+    [PropertyRange(0f, 0.5f)]
+    public float coroutineDelay = 0.1f;
 
     [TabGroup("Settings", "Division", SdfIconType.LayoutThreeColumns)]
     [BoxGroup("Settings/Division/Config")]
@@ -333,20 +331,106 @@ public class DungeonGenerator : MonoBehaviour
     }
 
     [HorizontalGroup("ActionButtons", Width = 0.5f)]
+    [Button("🎯 Generate Dungeon (c)", ButtonSizes.Large), GUIColor(0.3f, 0.7f, 1f)]
+    [PropertyOrder(-1)]
+    [PropertySpace(SpaceAfter = 10)]
+    [HideInEditorMode]
+    public void NewGenerationCoroutine()
+    {
+        RandomizeSeed();
+        navMesh.RemoveData();
+        StartCoroutine(GenerateRoomsCoroutine());
+    }
+    
+    [HorizontalGroup("ActionButtons", Width = 0.5f)]
     [Button("🎯 Generate Dungeon", ButtonSizes.Large), GUIColor(0.3f, 0.7f, 1f)]
     [PropertyOrder(-1)]
     [PropertySpace(SpaceAfter = 10)]
-    private void NewGeneration()
+    [HideInPlayMode]
+    public void NewGeneration()
     {
         RandomizeSeed();
-        RegenerateRooms();
+        navMesh.RemoveData();
+        GenerateRooms();
     }
-
+    
+    [HorizontalGroup("ActionButtons", Width = 0.5f)]
+    [Button("♻️ Regenerate Dungeon (c)", ButtonSizes.Large), GUIColor(0.2f, 1f, 0.6f)]
+    [PropertyOrder(-1)]
+    [PropertySpace(SpaceAfter = 10)]
+    [HideInEditorMode]
+    public void RegenerationCoroutine()
+    {
+        navMesh.RemoveData();
+        StartCoroutine(GenerateRoomsCoroutine());
+    }
+    
     [HorizontalGroup("ActionButtons", Width = 0.5f)]
     [Button("♻️ Regenerate Dungeon", ButtonSizes.Large), GUIColor(0.2f, 1f, 0.6f)]
     [PropertyOrder(-1)]
     [PropertySpace(SpaceAfter = 10)]
-    private void RegenerateRooms()
+    [HideInPlayMode]
+    public void Regeneration()
+    {
+        navMesh.RemoveData();
+        GenerateRooms();
+    }
+    
+    private IEnumerator GenerateRoomsCoroutine()
+    {
+        rooms.Clear();
+        rnd = new System.Random(seed);
+        rooms.Add(new Room(new RectInt(startPoint.x, startPoint.y, dungeonSize.x, dungeonSize.y), SplitMethod.Horizontaly, Color.green));
+        walls.Clear();
+        doors.Clear();
+        graph.DropTable();
+        safeSpawnPoints.Clear();
+        while (meshes.childCount > 0) {
+                Destroy(meshes.GetChild(0).gameObject);
+                yield return null;
+        }
+        var failStreak = 0;
+        // Add new split room to the list
+        for (var i = 0; i < divisions; i++)
+        {
+            if (endlessDivisions) divisions++;
+            
+            var tempRoom = rooms[0];
+            rooms.RemoveAt(0);
+            if (tempRoom.rectBounds.width > sizeConstrain * 2 && tempRoom.rectBounds.height > sizeConstrain * 2)
+            {
+                // Do nothing
+            }
+            else if (tempRoom.rectBounds.width < sizeConstrain * 2
+                && tempRoom.rectBounds.height > sizeConstrain * 2
+                && tempRoom.rectBounds.width * acceptableRatio < tempRoom.rectBounds.height)
+            {
+                tempRoom.splitMethod = SplitMethod.Horizontaly;
+            }
+            else if (tempRoom.rectBounds.height < sizeConstrain * 2
+                     && tempRoom.rectBounds.width > sizeConstrain * 2
+                     && tempRoom.rectBounds.height * acceptableRatio < tempRoom.rectBounds.width)
+            {
+                tempRoom.splitMethod = SplitMethod.Verticaly;
+            }
+            else
+            {
+                failStreak++;
+                rooms.Add(tempRoom);
+                if (failStreak >= rooms.Count * 2)
+                {
+                    AfterGenerationCoroutine();
+                    yield break;
+                }
+                continue;
+            }
+            failStreak = 0;
+            rooms.AddRange(SplitRoom(tempRoom, tempRoom.splitMethod, wallWidth));
+            yield return new WaitForSeconds(coroutineDelay);
+        }
+    }
+    
+    private void GenerateRooms()
     {
         rooms.Clear();
         rnd = new System.Random(seed);
@@ -358,7 +442,6 @@ public class DungeonGenerator : MonoBehaviour
         while (meshes.childCount > 0) {
             DestroyImmediate(meshes.GetChild(0).gameObject);
         }
-
         var failStreak = 0;
         // Add new split room to the list
         for (var i = 0; i < divisions; i++)
@@ -398,7 +481,68 @@ public class DungeonGenerator : MonoBehaviour
             rooms.AddRange(SplitRoom(tempRoom, tempRoom.splitMethod, wallWidth));
         }
     }
+    
+    private List<Room> SplitRoom(Room room, SplitMethod splitMethod, int offset)
+    {
+        var newRooms = new List<Room>();
+        switch (splitMethod)
+        {
+            case SplitMethod.Verticaly:
+                var newRoom1 = new RectInt(room.rectBounds.x, room.rectBounds.y, rnd.Next(sizeConstrain, room.rectBounds.width - sizeConstrain) + offset,  room.rectBounds.height);
+                var newRoom2 = new RectInt(newRoom1.xMax - offset, room.rectBounds.y, room.rectBounds.width - newRoom1.width + offset, room.rectBounds.height);
+                newRooms.Add(new Room(newRoom1, SplitMethod.Horizontaly, Color.cyan));
+                newRooms.Add(new Room(newRoom2, SplitMethod.Horizontaly, Color.cyan));
+                break;
+            case SplitMethod.Horizontaly:
+                newRoom1 = new RectInt(room.rectBounds.x, room.rectBounds.y, room.rectBounds.width, rnd.Next(sizeConstrain, room.rectBounds.height - sizeConstrain) + offset);
+                newRoom2 = new RectInt(room.rectBounds.x, newRoom1.yMax - offset, room.rectBounds.width, room.rectBounds.height - newRoom1.height + offset);
+                newRooms.Add(new Room(newRoom1, SplitMethod.Verticaly, Color.cyan));
+                newRooms.Add(new Room(newRoom2, SplitMethod.Verticaly,Color.cyan));
+                break;
+        }
+        return newRooms;
+    }
 
+    private void AfterGenerationCoroutine()
+    {
+        StartCoroutine(BuildTheWallCoroutine(() => 
+        {
+            StartCoroutine(PlaceDoorsCoroutine(() => 
+            {
+                StartCoroutine(MakeConnectionsCoroutine(() =>
+                {
+                    rooms.Sort((r1, r2) => r1.GetSize().CompareTo(r2.GetSize()));
+                    StartCoroutine(CuttingRoomsCoroutine(() =>
+                    {
+                        StartCoroutine(CleanUpDoorsCoroutine( () =>
+                        {
+                            showDoors = false;
+                            showFloor = false;
+                            showWalls = false;
+                            showEdges = false;
+                            showNodes = false;
+                            StartCoroutine(PlacingMeshesCoroutine(() =>
+                            {
+                                Debug.Log("Done!");
+                                PickSpawnLocation();
+                                navMesh.BuildNavMesh();
+                            }));
+                        }));
+                    }));
+                }));
+            }));
+        }));
+        // StartCoroutine(BuildTheWallCoroutine());
+        // StartCoroutine(PlaceDoorsCoroutine());
+        // StartCoroutine(MakeConnectionsCoroutine());
+        // rooms.Sort((r1, r2) => r1.GetSize().CompareTo(r2.GetSize()));
+        // StartCoroutine(CuttingRoomsCoroutine());
+        // StartCoroutine(CleanUpDoorsCoroutine());
+        // StartCoroutine(PlacingMeshesCoroutine());
+        // PickSpawnLocation();
+        // navMesh.BuildNavMesh();
+    }
+    
     private void AfterGeneration()
     {
         BuildTheWall();
@@ -411,6 +555,7 @@ public class DungeonGenerator : MonoBehaviour
         PickSpawnLocation();
         navMesh.BuildNavMesh();
     }
+    
     private void Update()
     {
         if (showFloor)
@@ -440,71 +585,73 @@ public class DungeonGenerator : MonoBehaviour
         }
     }
 
-    private List<Room> SplitRoom(Room room, SplitMethod splitMethod, int offset)
+    private IEnumerator BuildTheWallCoroutine(Action onComplete)
     {
-        var newRooms = new List<Room>();
-        switch (splitMethod)
+        for (int i = 0; i < rooms.Count; i++)
         {
-            case SplitMethod.Verticaly:
-                var newRoom1 = new RectInt(room.rectBounds.x, room.rectBounds.y, rnd.Next(sizeConstrain, room.rectBounds.width - sizeConstrain) + offset,  room.rectBounds.height);
-                var newRoom2 = new RectInt(newRoom1.xMax - offset, room.rectBounds.y, room.rectBounds.width - newRoom1.width + offset, room.rectBounds.height);
-                newRooms.Add(new Room(newRoom1, SplitMethod.Horizontaly, Color.cyan));
-                newRooms.Add(new Room(newRoom2, SplitMethod.Horizontaly, Color.cyan));
-                break;
-            case SplitMethod.Horizontaly:
-                newRoom1 = new RectInt(room.rectBounds.x, room.rectBounds.y, room.rectBounds.width, rnd.Next(sizeConstrain, room.rectBounds.height - sizeConstrain) + offset);
-                newRoom2 = new RectInt(room.rectBounds.x, newRoom1.yMax - offset, room.rectBounds.width, room.rectBounds.height - newRoom1.height + offset);
-                newRooms.Add(new Room(newRoom1, SplitMethod.Verticaly, Color.cyan));
-                newRooms.Add(new Room(newRoom2, SplitMethod.Verticaly,Color.cyan));
-                break;
+            for (int j = i + 1; j < rooms.Count; j++)
+            {
+                if (BuildingWallsBody(i, j))
+                {
+                    yield return new WaitForSeconds(coroutineDelay);
+                }
+            }
         }
-        return newRooms;
+        BuildingWallsTail();
+        onComplete?.Invoke();
     }
-
+    
     private void BuildTheWall()
     {
         for (int i = 0; i < rooms.Count; i++)
         {
             for (int j = i + 1; j < rooms.Count; j++)
             {
-                var firstRoom = rooms[i];
-                var secondRoom = rooms[j];
-
-                if (!AlgorithmsUtils.Intersects(firstRoom.rectBounds, secondRoom.rectBounds)) continue;
-                
-                var intersect = AlgorithmsUtils.Intersect(firstRoom.rectBounds, secondRoom.rectBounds);
-                var tempBox = new BoundsInt(new Vector3Int(intersect.x, 0, intersect.y),
-                    new Vector3Int(intersect.width, wallHeight, intersect.height));
-                var adaptiveColor = Color.red;
-                var doorDirection = DoorDirection.None;
-                if (tempBox.size.x > tempBox.size.z)
-                {
-                    // tempBox.position += new Vector3Int(wallWidth, 0, 0);
-                    // tempBox.size -= new Vector3Int(wallWidth * 2, 0, 0);
-                    if (tempBox.size.x > doorWidth + wallWidth * 2)
-                    {
-                        adaptiveColor = Color.green;
-                        doorDirection = DoorDirection.Z;
-                    }
-                }
-                else if (tempBox.size.z > tempBox.size.x)
-                {
-                    // tempBox.position += new Vector3Int(0, 0, wallWidth);
-                    // tempBox.size -= new Vector3Int(0, 0, wallWidth * 2);
-                    if (tempBox.size.z > doorWidth + wallWidth * 2)
-                    {
-                        adaptiveColor = Color.green;
-                        doorDirection = DoorDirection.X;
-                    }
-                }
-                var tempWall = new Wall(tempBox, adaptiveColor, doorDirection);
-                firstRoom.walls.Add(tempWall);
-                secondRoom.walls.Add(tempWall);
-                tempWall.rooms.Add(firstRoom);
-                tempWall.rooms.Add(secondRoom);
-                walls.Add(tempWall);
+                BuildingWallsBody(i, j);
             }
         }
+        BuildingWallsTail();
+    }
+
+    private bool BuildingWallsBody(int i, int j)
+    {
+        var firstRoom = rooms[i];
+        var secondRoom = rooms[j];
+
+        if (!AlgorithmsUtils.Intersects(firstRoom.rectBounds, secondRoom.rectBounds)) return false;
+                
+        var intersect = AlgorithmsUtils.Intersect(firstRoom.rectBounds, secondRoom.rectBounds);
+        var tempBox = new BoundsInt(new Vector3Int(intersect.x, 0, intersect.y),
+            new Vector3Int(intersect.width, wallHeight, intersect.height));
+        var adaptiveColor = Color.red;
+        var doorDirection = DoorDirection.None;
+        if (tempBox.size.x > tempBox.size.z)
+        {
+            if (tempBox.size.x > doorWidth + wallWidth * 2)
+            {
+                adaptiveColor = Color.green;
+                doorDirection = DoorDirection.Z;
+            }
+        }
+        else if (tempBox.size.z > tempBox.size.x)
+        {
+            if (tempBox.size.z > doorWidth + wallWidth * 2)
+            {
+                adaptiveColor = Color.green;
+                doorDirection = DoorDirection.X;
+            }
+        }
+        var tempWall = new Wall(tempBox, adaptiveColor, doorDirection);
+        firstRoom.walls.Add(tempWall);
+        secondRoom.walls.Add(tempWall);
+        tempWall.rooms.Add(firstRoom);
+        tempWall.rooms.Add(secondRoom);
+        walls.Add(tempWall);
+        return true;
+    }
+
+    private void BuildingWallsTail()
+    {
         var edgeWall1 = new Wall(new BoundsInt(new Vector3Int(startPoint.x, 0, startPoint.y), new Vector3Int(wallWidth, wallHeight, dungeonSize.y)), Color.red, DoorDirection.None);
         var edgeWall2 = new Wall(new BoundsInt(new Vector3Int(startPoint.x, 0, dungeonSize.y - wallWidth), new Vector3Int(dungeonSize.x, wallHeight, wallWidth)), Color.red, DoorDirection.None);
         var edgeWall3 = new Wall(new BoundsInt(new Vector3Int(dungeonSize.x - wallWidth, 0, startPoint.y), new Vector3Int(wallWidth, wallHeight, dungeonSize.y)), Color.red, DoorDirection.None);
@@ -514,51 +661,97 @@ public class DungeonGenerator : MonoBehaviour
         walls.Add(edgeWall3);
         walls.Add(edgeWall4);
     }
+    
 
+    private IEnumerator PlaceDoorsCoroutine(Action onComplete)
+    {
+        foreach (var wall in walls)
+        {
+            PlacingDoorsBody(wall);
+            yield return new WaitForSeconds(coroutineDelay);
+        }
+        onComplete?.Invoke();
+    }
+    
     private void PlaceDoors()
     {
         foreach (var wall in walls)
         {
-            if (wall.doorDirection is DoorDirection.None) continue;
-
-            switch (wall.doorDirection)
-            {
-                case DoorDirection.X:
-                    var zMax = wall.bounds.zMax - wallWidth - doorWidth;
-                    var zMin = wall.bounds.zMin + wallWidth;
-                    var tempBounds = new BoundsInt(new Vector3Int(wall.bounds.xMin - doorOffset, 0, rnd.Next(zMin, zMax)), new Vector3Int(wallWidth + doorOffset * 2, wallHeight + doorOffset, doorWidth));
-                    var tempDoor = new Door(tempBounds, Color.yellow);
-                    wall.door = tempDoor;
-                    doors.Add(tempDoor);
-                    break;
-                case DoorDirection.Z:
-                    var xMax = wall.bounds.xMax - doorWidth - wallWidth;
-                    var xMin = wall.bounds.xMin + wallWidth;
-                    tempBounds = new BoundsInt(new Vector3Int(rnd.Next(xMin, xMax), 0, wall.bounds.zMin - doorOffset), new Vector3Int(doorWidth, wallHeight + doorOffset, wallWidth + doorOffset * 2));
-                    tempDoor = new Door(tempBounds, Color.yellow);
-                    wall.door = tempDoor;
-                    doors.Add(tempDoor);
-                    break;
-            }
+            PlacingDoorsBody(wall);
         }
     }
 
+    private void PlacingDoorsBody(Wall wall)
+    {
+        if (wall.doorDirection is DoorDirection.None) return;
+
+        switch (wall.doorDirection)
+        {
+            case DoorDirection.X:
+                var zMax = wall.bounds.zMax - wallWidth - doorWidth;
+                var zMin = wall.bounds.zMin + wallWidth;
+                var tempBounds = new BoundsInt(new Vector3Int(wall.bounds.xMin - doorOffset, 0, rnd.Next(zMin, zMax)), new Vector3Int(wallWidth + doorOffset * 2, wallHeight + doorOffset, doorWidth));
+                var tempDoor = new Door(tempBounds, Color.yellow);
+                wall.door = tempDoor;
+                doors.Add(tempDoor);
+                break;
+            case DoorDirection.Z:
+                var xMax = wall.bounds.xMax - doorWidth - wallWidth;
+                var xMin = wall.bounds.xMin + wallWidth;
+                tempBounds = new BoundsInt(new Vector3Int(rnd.Next(xMin, xMax), 0, wall.bounds.zMin - doorOffset), new Vector3Int(doorWidth, wallHeight + doorOffset, wallWidth + doorOffset * 2));
+                tempDoor = new Door(tempBounds, Color.yellow);
+                wall.door = tempDoor;
+                doors.Add(tempDoor);
+                break;
+        }
+    }
+
+    private IEnumerator MakeConnectionsCoroutine(Action onComplete)
+    {
+        foreach (var wall in walls)
+        {
+            MakeConnectionsBody(wall);
+            yield return new WaitForSeconds(coroutineDelay);
+        }
+        onComplete?.Invoke();
+    }
+    
     private void MakeConnections()
     {
         foreach (var wall in walls)
         {
-            if (wall.doorDirection is DoorDirection.None) continue;
-            
-            graph.AddNode(wall.rooms[0]);
-            graph.AddNode(wall.rooms[1]);
-
-            var connection1 = new Connection(wall.rooms[1], wall.door);
-            var connection2 = new Connection(wall.rooms[0], wall.door);
-            graph.AddEdge(wall.rooms[0], connection1);
-            graph.AddEdge(wall.rooms[1], connection2);
+            MakeConnectionsBody(wall);
         }
     }
 
+    private void MakeConnectionsBody(Wall wall)
+    {
+        if (wall.doorDirection is DoorDirection.None) return;
+            
+        graph.AddNode(wall.rooms[0]);
+        graph.AddNode(wall.rooms[1]);
+
+        var connection1 = new Connection(wall.rooms[1], wall.door);
+        var connection2 = new Connection(wall.rooms[0], wall.door);
+        graph.AddEdge(wall.rooms[0], connection1);
+        graph.AddEdge(wall.rooms[1], connection2);
+    }
+
+    private IEnumerator CuttingRoomsCoroutine(Action onComplete)
+    {
+        var targetAmount = rooms.Count - (int)(((float)rooms.Count / 100) * subtractedPercent);
+        while (rooms.Count(a => a.enabled) > targetAmount)
+        {
+            yield return new WaitForSeconds(coroutineDelay);
+            var room = rooms.First(a => a.enabled);
+            room.Disable();
+            if (BFS(graph.GetList().Keys.First(a => a.enabled))) continue;
+            room.Enable();
+            
+            yield break;
+        }
+        onComplete?.Invoke();
+    }
     private void CuttingRooms()
     {
         var targetAmount = rooms.Count - (int)(((float)rooms.Count / 100) * subtractedPercent);
@@ -568,10 +761,28 @@ public class DungeonGenerator : MonoBehaviour
             room.Disable();
             if (BFS(graph.GetList().Keys.First(a => a.enabled))) continue;
             room.Enable();
+            
             return;
         }
     }
 
+    private IEnumerator CleanUpDoorsCoroutine(Action onComplete)
+    {
+        var queue = new Queue<Door>();
+        foreach (var door in doors)
+        {
+            queue.Enqueue(door);
+            yield return null;
+        }
+        while (queue.Count > 0)
+        {
+            var door = queue.Dequeue();
+            door.enabled = false;
+            if (!BFS(graph.GetList().Keys.First(a => a.enabled))) door.enabled = true;
+            yield return new WaitForSeconds(coroutineDelay);
+        }
+        onComplete?.Invoke();
+    }
     private void CleanUpDoors()
     {
         var queue = new Queue<Door>();
@@ -587,6 +798,68 @@ public class DungeonGenerator : MonoBehaviour
         }
     }
 
+    private IEnumerator PlacingMeshesCoroutine(Action onComplete)
+    {
+        if (wallPrefab == null || floorPrefab == null) yield return null;
+        var placedObjects = new List<Vector3Int>();
+        var counter = 0;
+        var wallsParentalObject = new GameObject("Walls");
+        wallsParentalObject.transform.SetParent(meshes.transform);
+        foreach (var wall in walls)
+        {
+            counter++;
+            var doorEnabled = false;
+            if (wall.doorDirection is not DoorDirection.None)
+            {
+                if (wall.door.enabled)
+                {
+                    doorEnabled = true;
+                }
+            }
+            
+            var wallParentalObject = new GameObject($"Wall-{counter}");
+            wallParentalObject.transform.SetParent(wallsParentalObject.transform);
+            
+            for (int z = wall.bounds.zMin; z < wall.bounds.zMax; z++)
+            {
+                for (int x = wall.bounds.xMin; x < wall.bounds.xMax; x++)
+                {
+                    var pos = new Vector3Int(x, 0, z);
+                    if (placedObjects.Contains(pos)) continue;
+                    if (doorEnabled)
+                    {
+                        if (wall.door.bounds.Contains(pos)) continue;
+                    }
+                    placedObjects.Add(pos);
+                    yield return new WaitForSeconds(coroutineDelay/5);
+                    var tempObject = Instantiate(wallPrefab, pos + new Vector3(0.5f, 0.5f, 0.5f), Quaternion.identity, wallParentalObject.transform);
+                }
+            }
+        }
+        counter = 0;
+        var roomsParentalObject = new GameObject("Floor");
+        roomsParentalObject.transform.SetParent(meshes.transform);
+        foreach (var room in rooms.Where(room => room.enabled))
+        {
+            var roomParentalObject = new GameObject($"Room-{counter}");
+            roomParentalObject.transform.SetParent(roomsParentalObject.transform);
+            counter++;
+            
+            for (int z = room.bounds.zMin; z < room.bounds.zMax; z++)
+            {
+                for (int x = room.bounds.xMin; x < room.bounds.xMax; x++)
+                {
+                    var pos = new Vector3Int(x, 0, z);
+                    if (placedObjects.Contains(pos)) continue;
+                    placedObjects.Add(pos);
+                    yield return new WaitForSeconds(coroutineDelay/20);
+                    var tempFloorObject = Instantiate(floorPrefab, pos + new Vector3(0.5f, 0, 0.5f), Quaternion.Euler(90f, 0, 0), roomParentalObject.transform);
+                }
+            }
+        }
+        onComplete?.Invoke();
+    }
+    
     private void PlacingMeshes()
     {
         if (wallPrefab == null || floorPrefab == null) return;
@@ -644,7 +917,6 @@ public class DungeonGenerator : MonoBehaviour
                 }
             }
         }
-        
     }
 
     private void PickSpawnLocation()
