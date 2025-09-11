@@ -3,26 +3,25 @@ using UnityEngine;
 
 public class AlgorithmsUtils
 {
-    public static bool Intersects(RectInt a, RectInt b)
+    public static bool Intersects(RectInt a, RectInt b, out RectInt intersection)
     {
-        return a.xMin < b.xMax &&
-               a.xMax > b.xMin &&
-               a.yMin < b.yMax &&
-               a.yMax > b.yMin;
-    }
-    
-    public static RectInt Intersect(RectInt a, RectInt b)
-    {
-        int x = Mathf.Max(a.xMin, b.xMin);
-        int y = Mathf.Max(a.yMin, b.yMin);
-        int width = Mathf.Min(a.xMax, b.xMax) - x;
-        int height = Mathf.Min(a.yMax, b.yMax) - y;
-
-        if (width <= 0 || height <= 0)
+        var intersects = a.xMin < b.xMax &&
+                         a.xMax > b.xMin &&
+                         a.yMin < b.yMax &&
+                         a.yMax > b.yMin;
+        
+        if (intersects)
         {
-            return new RectInt();
+            int x = Mathf.Max(a.xMin, b.xMin);
+            int y = Mathf.Max(a.yMin, b.yMin);
+            int width = Mathf.Min(a.xMax, b.xMax) - x;
+            int height = Mathf.Min(a.yMax, b.yMax) - y;
+            intersection = new RectInt(x, y, width, height);
+            return true;
         }
-        return new RectInt(x, y, width, height);
+
+        intersection = new RectInt();
+        return false;
     }
     
     public static void FillRectangle(char[,] array, RectInt area, char value)

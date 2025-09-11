@@ -3,6 +3,7 @@ using System.Linq;
 using Sirenix.OdinInspector;
 using UnityEngine;
 using static Dungeon.Enums;
+using static Navigation.Classes;
 
 namespace Dungeon
 {
@@ -349,6 +350,26 @@ namespace Dungeon
                 SpawnOffset = spawnOffset;
                 DefaultRotation = defaultRotation;
                 PrefabType = prefabType;
+            }
+        }
+        
+        // (DungeonDebugData class remains the same as before)
+        public class DungeonDebugData
+        {
+            public List<Room> Rooms;
+            public List<Door> Doors;
+            public List<Wall> Walls;
+            public Graph<Node, Connection> RoomGraph;
+            public NavNode[,] NavigationMap;
+
+            public DungeonDebugData(List<Room> rooms, List<Door> doors, List<Wall> walls, Graph<Node, Connection> graph,
+                NavNode[,] navigationMap)
+            {
+                Rooms = rooms;
+                Doors = doors;
+                Walls = walls;
+                RoomGraph = graph;
+                NavigationMap = navigationMap;
             }
         }
     }

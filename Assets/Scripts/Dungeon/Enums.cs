@@ -1,3 +1,4 @@
+using System;
 using Sirenix.OdinInspector;
 
 namespace Dungeon
@@ -124,6 +125,25 @@ namespace Dungeon
             /// in generated dungeons.
             /// </summary>
             Pillar
+        }
+        
+        /// <summary>
+        /// A struct to hold all visualization settings.
+        /// Using [System.Serializable] allows this to be configured in the Unity Inspector.
+        /// </summary>
+        [Flags]
+        public enum VisualFlags
+        {
+            None          = 0,
+            Walls         = 1 << 0, // 1
+            Floor         = 1 << 1, // 2
+            Labels        = 1 << 2, // 4
+            Doors         = 1 << 3, // 8
+            RoomNodes     = 1 << 4, // 16
+            RoomEdges     = 1 << 5, // 32
+            NavNodes      = 1 << 6, // 64
+            NavEdges      = 1 << 7, // 128
+            All           = ~0
         }
     }
 }

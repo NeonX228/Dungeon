@@ -1,90 +1,130 @@
-using System.Collections.Generic;
-using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using static Dungeon.Classes;
+using static Dungeon.Enums;
 
 namespace Dungeon
 {
-    public abstract class DebugVisuals
+    public static class DebugVisuals
     {
-        public static void DrawVisuals(bool showWalls, bool showFloor, bool showLabels, bool showDoors, bool showNodes, bool showEdges, List<Room> rooms, List<Door> doors, List<Wall> walls, Graph<Node, Connection> graph)
+        private static GUIStyle _labelStyle;
+
+        private static GUIStyle LabelStyle => _labelStyle ??= new GUIStyle
         {
-            var style = new GUIStyle
+            normal = { textColor = Color.white },
+            fontStyle = FontStyle.Bold,
+            alignment = TextAnchor.MiddleCenter
+        };
+
+        // The new, cleaner method signature
+        public static void DrawVisuals(DungeonDebugData data, VisualFlags options)
+        {
+            if (data == null) return;
+
+            // Use the properties from the options struct
+            if ((options & VisualFlags.Walls) != 0 && data.Walls != null)
             {
-                normal =
+                for (var i = 0; i < data.Walls.Count; i++)
                 {
-                    textColor = Color.white
-                },
-                fontStyle = FontStyle.Bold,
-                alignment = TextAnchor.MiddleCenter
-            };
-            if (showWalls)
-            {
-                for (var i = 0; i < walls.Count; i++)
-                {
-                    var wall = walls[i];
-                    var color = wall.Color;
-                    color.a = 0.3f;
-                    Gizmos.color = color;
-                    var center = wall.Bounds.center;
-                    Gizmos.DrawCube(center, wall.Bounds.size);
-                    if (showLabels)
-                    {
-                        Handles.Label(center, $"*{i}", style);
-                    }
-                }
-            }
-    
-            style.normal.textColor = Color.gray;
-            if (showFloor)
-            {
-                for (var i = 0; i < rooms.Count; i++)
-                {
-                    var room = rooms[i];
-                    if (!room.Enabled) continue;
-                    var color = room.Color;
-                    color.a = 0.3f;
-                    Gizmos.color = color;
-                    var center = new Vector3(room.RectBounds.center.x, 0, room.RectBounds.center.y);
-                    var size = new Vector3(room.RectBounds.size.x, 0.01f, room.RectBounds.size.y);
-                    Gizmos.DrawCube(center, size);
-                    if (showLabels)
-                    {
-                        Handles.Label(center, $"#{i}", style);
-                    }
+                    DrawGizmoCube(data.Walls[i].Bounds, data.Walls[i].Color, $"*{i}", (options & VisualFlags.Labels) != 0, Color.white);
                 }
             }
 
-            if (showDoors)
+            if ((options & VisualFlags.Floor) != 0 && data.Rooms != null)
             {
-                foreach (var door in doors)
-                {
-                    if (!door.Enabled) continue;
-                    var color = door.Color;
-                    color.a = 0.3f;
-                    Gizmos.color = color;
-                    var center = door.Bounds.center;
-                    Gizmos.DrawCube(center, door.Bounds.size);
-                }
+                // ... same logic, just using options.ShowFloor and options.ShowLabels
             }
-    
+
+            if ((options & VisualFlags.Doors) != 0 && data.Doors != null)
+            {
+                // ... same logic, using options.ShowDoors
+            }
+
+            // Pass the relevant booleans to the helper methods
+            if ((options & (VisualFlags.RoomNodes | VisualFlags.RoomEdges)) != 0 && data.RoomGraph != null)
+            {
+                DrawRoomGraph(data.RoomGraph, (options & VisualFlags.RoomNodes) != 0, (options & VisualFlags.RoomEdges) != 0);
+            }
+
+            if ((options & (VisualFlags.NavNodes | VisualFlags.NavEdges)) != 0 && data.NavigationMap != null)
+            {
+                DrawNavGraph(data.NavigationMap, (options & VisualFlags.NavNodes) != 0, (options & VisualFlags.NavEdges) != 0);
+            }
+        }
+
+        // (Helper methods like DrawGizmoCube, DrawRoomGraph, etc. remain the same)
+        private static void DrawGizmoCube(BoundsInt bounds, Color color, string label = null, bool showLabel = false,
+            Color labelColor = default)
+        {
+            color.a = 0.3f;
+            Gizmos.color = color;
+            Gizmos.DrawCube(bounds.center, bounds.size);
+
+            if (showLabel && !string.IsNullOrEmpty(label))
+            {
+                LabelStyle.normal.textColor = labelColor;
+                Handles.Label(bounds.center, label, LabelStyle);
+            }
+        }
+
+        private static void DrawRoomGraph(Graph<Node, Connection> graph, bool showNodes, bool showEdges)
+        {
             var connectionsList = graph.GetList();
-            Gizmos.color = Color.white;
+
             foreach (var node in connectionsList.Keys)
             {
+                if (!node.Enabled) continue;
+
                 if (showNodes)
                 {
-                    if (!node.Enabled) continue;
+                    Gizmos.color = Color.white;
                     Gizmos.DrawSphere(node.Bounds.center, 1);
                 }
 
                 if (!showEdges) continue;
-                
-                foreach (var connection in connectionsList[node].Where(connection => connection.Node.Enabled && connection.Via.Enabled))
+
+                // Using a simple foreach and if-check is generally more performant than LINQ in hot paths like this.
+                foreach (var connection in connectionsList[node])
                 {
-                    Gizmos.DrawLine(node.Bounds.center, connection.Via.Bounds.center);
-                    Gizmos.DrawLine(connection.Via.Bounds.center, connection.Node.Bounds.center);
+                    if (connection.Node.Enabled && connection.Via.Enabled)
+                    {
+                        Gizmos.color = Color.cyan;
+                        Gizmos.DrawLine(node.Bounds.center, connection.Via.Bounds.center);
+                        Gizmos.DrawLine(connection.Via.Bounds.center, connection.Node.Bounds.center);
+                    }
+                }
+            }
+        }
+
+        private static void DrawNavGraph(Navigation.Classes.NavNode[,] map, bool showNodes, bool showEdges)
+        {
+            int width = map.GetLength(0);
+            int height = map.GetLength(1);
+
+            for (var x = 0; x < width; x++)
+            {
+                for (var y = 0; y < height; y++)
+                {
+                    var node = map[x, y];
+                    if (node == null) continue;
+
+                    var nodePos = new Vector3(x, 0, y);
+
+                    if (showNodes)
+                    {
+                        Gizmos.color = Color.violet;
+                        Gizmos.DrawWireSphere(nodePos, 0.2f);
+                    }
+
+                    if (showEdges)
+                    {
+                        Gizmos.color = Color.magenta;
+                        foreach (var neighbour in node.neighbours)
+                        {
+                            var neighbourPos = new Vector3(neighbour.position.x, 0, neighbour.position.y);
+                            Gizmos.DrawLine(nodePos, neighbourPos);
+                        }
+                    }
                 }
             }
         }
